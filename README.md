@@ -1,17 +1,21 @@
 # dwarffi
 
-An authentic, **DWARF-powered FFI for Python**.
+An authentic, **DWARF-powered type interface for Python**.
 
-`dwarffi` allows you to interact with C memory layouts using
+`dwarffi` allows you to interact with memory layouts using
 **Intermediate Symbol Files (ISF)** generated from DWARF debug
 information. It provides a CFFI-like experience without requiring header
 files---instead, it uses the actual compiled structures from your
 binaries.
 
-Whether you're doing embedded systems reverse engineering, interacting
-with a QEMU instance, analyzing kernel memory, or parsing firmware
-dumps, `dwarffi` ensures that **bitness, endianness, padding, and
-layout** are handled exactly as they appear in the target architecture.
+**Intermediate Symbol Files (ISF)** are JSON representations of DWARF type
+information. They capture the exact memory layout, including padding and
+alignment, as defined in the original C code and compiled into the binary. You 
+can generate ISF files using the `dwarf2json` tool, which extracts DWARF info 
+from ELF binaries.
+
+Read more about `dwarf2json` and ISF in the [dwarf2json README](https://github.com/volatilityfoundation/dwarf2json).
+
 
 ------------------------------------------------------------------------
 
