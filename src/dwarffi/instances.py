@@ -382,6 +382,17 @@ class BoundTypeInstance:
 
         raise AttributeError(f"Cannot set attribute '{name}' on type '{self._instance_type_name}'. Use '[0]' for base/enum types.")
 
+    def __eq__(self, other):
+        if not isinstance(other, BoundTypeInstance):
+            return False
+        # If they point to the exact same memory
+        if self._instance_buffer is other._instance_buffer and self._instance_offset == other._instance_offset:
+            return True
+        # If they have the same type and bytes match
+        if self._instance_type_name == other._instance_type_name:
+            return self.to_bytes() == other.to_bytes()
+        return False
+
     def to_bytes(self) -> bytes:
         size = self._instance_type_def.size
         if size == 0:
