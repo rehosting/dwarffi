@@ -18,17 +18,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # required for tags/history
+          fetch-tags: true  # ensure tags are present
+
       - name: Get next version
         uses: reecetech/version-increment@2023.10.1
         id: version
         with:
           use_api: true
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
 
       - name: Create tag (if not exists)
         shell: bash
@@ -37,7 +37,9 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           TAG="v${VERSION}"
 
+          # tags should already be available due to checkout settings, but this is safe
           git fetch --tags --force
+
           if git rev-parse "$TAG" >/dev/null 2>&1; then
             echo "Tag $TAG already exists; exiting."
             exit 0
