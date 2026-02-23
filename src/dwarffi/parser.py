@@ -11,8 +11,8 @@ except ImportError:
 
     _JSON_LIB_USED = "json"
 
-from .types import VtypeMetadata, VtypeBaseType, VtypeUserType, VtypeEnum, VtypeSymbol
 from .instances import BoundTypeInstance
+from .types import VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
 
 
 class VtypeJson:
@@ -291,7 +291,7 @@ class VtypeJsonGroup:
                 )
             except ValueError:
                 continue
-        raise ValueError(f"Type definition not found in any VtypeJson.")
+        raise ValueError("Type definition not found in any VtypeJson.")
 
     def shift_symbol_addresses(self, delta: int, path: str = None):
         if path is None:

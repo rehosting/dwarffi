@@ -1,5 +1,7 @@
 import struct
+
 import pytest
+
 from dwarffi.parser import isf_from_dict
 
 

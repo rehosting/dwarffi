@@ -1,6 +1,8 @@
 import json
-import pytest
 from unittest import mock
+
+import pytest
+
 from dwarffi.dffi import DFFI
 
 

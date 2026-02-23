@@ -1,27 +1,23 @@
-import weakref
-import re
-from typing import Any, Dict, Optional, Union, List
-from dwarffi.core import (
-    VtypeJsonGroup,
-    load_isf_json,
-    BoundTypeInstance,
-    VtypeUserType,
-    VtypeBaseType,
-    VtypeEnum,
-    Ptr,
-    BoundArrayView,
-)
-import os
-import shutil
-import subprocess
-import tempfile
 import json
 import lzma
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-from typing import List, Optional
+import weakref
+from typing import Any, Dict, List, Optional, Union
+
+from dwarffi.core import (
+    BoundArrayView,
+    BoundTypeInstance,
+    Ptr,
+    VtypeBaseType,
+    VtypeEnum,
+    VtypeJsonGroup,
+    VtypeUserType,
+    load_isf_json,
+)
 
 
 class DFFI:
@@ -431,7 +427,7 @@ class DFFI:
             except subprocess.CalledProcessError as e:
                 raise RuntimeError(
                     f"Compilation failed:\nCommand: {' '.join(cmd_compile)}\nStderr: {e.stderr}"
-                )
+                ) from e
 
             # 2) Run dwarf2json (types first; fallback to --elf if needed)
             cmd_d2j = [dwarf2json_cmd, "linux", "--elf-types", o_file]
@@ -444,7 +440,7 @@ class DFFI:
                 except subprocess.CalledProcessError as e:
                     raise RuntimeError(
                         f"dwarf2json failed:\nCommand: {' '.join(cmd_d2j)}\nStderr: {e.stderr}"
-                    )
+                    ) from e
 
             # 3) Parse
             try:
@@ -452,7 +448,7 @@ class DFFI:
             except json.JSONDecodeError as e:
                 raise RuntimeError(
                     f"Failed to parse dwarf2json output: {e}\nOutput head: {res.stdout[:500]}"
-                )
+                ) from e
 
             # 4) Optionally save the ISF to disk
             if save_isf_to:

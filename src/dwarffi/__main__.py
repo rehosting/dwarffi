@@ -1,7 +1,8 @@
 import argparse
 import struct
 import sys
-from dwarffi.parser import load_isf_json, VtypeJson, _JSON_LIB_USED
+
+from dwarffi.parser import _JSON_LIB_USED, VtypeJson, load_isf_json
 
 if __name__ == "__main__":
     cli_parser = argparse.ArgumentParser(

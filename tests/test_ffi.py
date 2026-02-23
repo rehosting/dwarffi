@@ -1,6 +1,8 @@
 import json
 import struct
+
 import pytest
+
 from dwarffi.dffi import DFFI
 
 

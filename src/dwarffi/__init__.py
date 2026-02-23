@@ -4,6 +4,7 @@ try:
 except Exception:
     __version__ = "0+unknown"
 
-__all__ = ["__version__"]
+from .core import *  # noqa: F403
 from .dffi import DFFI
-from .core import *
+
+__all__ = ["__version__", "DFFI"]
