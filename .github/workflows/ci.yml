@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # gcc is present on ubuntu-latest; dwarf2json is not.
+      # Your integration tests skip if dwarf2json isn't present; installing it lets them run. :contentReference[oaicite:4]{index=4}
+      - name: Set up Go (for dwarf2json)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+        continue-on-error: true
+
+      - name: Install dwarf2json (optional)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if command -v go >/dev/null 2>&1; then
+            go install github.com/volatilityfoundation/dwarf2json@latest
+            echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          else
+            echo "Go not available; skipping dwarf2json install"
+          fi
+        continue-on-error: true
+
+      - name: Install package (dev)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+
+      - name: Tests (pytest)
+        run: |
+          pytest -q
