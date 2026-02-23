@@ -8,6 +8,28 @@ if TYPE_CHECKING:
     from .parser import VtypeJson
 
 
+def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
+    """
+    Truncates and wraps an arbitrary Python integer into the boundaries of a 
+    C-style integer of `size_bytes` bytes, applying sign extension if needed.
+    """
+    if size_bytes == 0:
+        return 0
+    bits = size_bytes * 8
+    mask = (1 << bits) - 1
+    
+    # 1. Truncate to the specified bit width
+    val = value & mask
+    
+    # 2. If it's a signed type, check the sign bit and extend if necessary
+    if signed:
+        sign_bit = 1 << (bits - 1)
+        if val & sign_bit:
+            val -= (1 << bits)
+            
+    return val
+
+
 class BoundArrayView:
     """A view into an array field of a BoundTypeInstance, allowing get/set of elements."""
     __slots__ = '_parent_instance', '_array_field_name', '_array_subtype_info', '_array_count', '_element_size', '_array_start_offset_in_parent'
@@ -130,19 +152,8 @@ class BoundTypeInstance:
             if compiled_struct_obj is None:
                 raise ValueError(f"Cannot get compiled struct for base type '{base_type_def.name}' to write value.")
             
-            # Handle wrapping for unsigned types
-            if base_type_def.signed is False and isinstance(new_value, int) and new_value < 0:
-                new_value = new_value % (1 << (base_type_def.size * 8))
-            
-            # Handle wrapping for signed types (C-style overflow/underflow)
-            if base_type_def.signed is True and isinstance(new_value, int):
-                bits = base_type_def.size * 8
-                max_signed = (1 << (bits - 1)) - 1
-                min_signed = -(1 << (bits - 1))
-                if new_value > max_signed:
-                    new_value = new_value - (1 << bits)
-                if new_value < min_signed:
-                    new_value = ((new_value + (1 << bits)) % (1 << bits)) + min_signed
+            if isinstance(new_value, int):
+                new_value = _wrap_integer(new_value, base_type_def.size, bool(base_type_def.signed))
                     
             try:
                 compiled_struct_obj.pack_into(self._instance_buffer, self._instance_offset, new_value)
@@ -171,6 +182,8 @@ class BoundTypeInstance:
                 int_val_to_write = found_val
             else:
                 raise TypeError(f"Cannot write type '{type(new_value)}' to enum instance. Expected EnumInstance, int, or str.")
+            if isinstance(int_val_to_write, int):
+                int_val_to_write = _wrap_integer(int_val_to_write, base_type_def.size, bool(base_type_def.signed))
             try:
                 compiled_struct_obj.pack_into(self._instance_buffer, self._instance_offset, int_val_to_write)
             except struct.error as e:
@@ -288,12 +301,16 @@ class BoundTypeInstance:
                     value_to_write = value_to_write - (1 << bits)
                 if value_to_write < min_signed:
                     value_to_write = ((value_to_write + (1 << bits)) % (1 << bits)) + min_signed
+            if isinstance(value_to_write, int):
+                value_to_write = _wrap_integer(value_to_write, base_type_def.size, bool(base_type_def.signed))
             compiled_struct_obj.pack_into(self._instance_buffer, absolute_field_offset, value_to_write)
 
         elif kind == "pointer":
             ptr_base_type = self._instance_vtype_accessor.get_base_type("pointer")
             compiled_struct_obj = ptr_base_type.get_compiled_struct()
             address_to_write = value_to_write.address if isinstance(value_to_write, Ptr) else value_to_write
+            if isinstance(address_to_write, int):
+                address_to_write = _wrap_integer(address_to_write, ptr_base_type.size, False)
             compiled_struct_obj.pack_into(self._instance_buffer, absolute_field_offset, address_to_write)
 
         elif kind == "enum":
@@ -306,6 +323,8 @@ class BoundTypeInstance:
                 int_val_to_write = value_to_write
             elif isinstance(value_to_write, str):
                 int_val_to_write = enum_def.constants.get(value_to_write)
+            if isinstance(int_val_to_write, int):
+                int_val_to_write = _wrap_integer(int_val_to_write, base_type_def.size, bool(base_type_def.signed))
             compiled_struct_obj.pack_into(self._instance_buffer, absolute_field_offset, int_val_to_write)
 
         elif kind == "bitfield":
