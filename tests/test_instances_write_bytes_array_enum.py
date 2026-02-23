@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import struct
 
-import pytest
-
 from dwarffi.core import isf_from_dict
 
 

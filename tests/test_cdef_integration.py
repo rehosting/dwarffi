@@ -2,9 +2,11 @@ import json
 import lzma
 import os
 import shutil
-import pytest
-from dwarffi.dffi import DFFI
 import subprocess
+
+import pytest
+
+from dwarffi.dffi import DFFI
 
 # Check for the primary dependency
 HAS_DWARF2JSON = shutil.which("dwarf2json") is not None

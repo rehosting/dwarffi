@@ -1,27 +1,23 @@
-import weakref
-import re
-from typing import Any, Dict, Optional, Union, List
-from dwarffi.core import (
-    VtypeJsonGroup,
-    load_isf_json,
-    BoundTypeInstance,
-    VtypeUserType,
-    VtypeBaseType,
-    VtypeEnum,
-    Ptr,
-    BoundArrayView,
-)
-import os
-import shutil
-import subprocess
-import tempfile
 import json
 import lzma
 import os
+import re
 import shutil
 import subprocess
 import tempfile
-from typing import List, Optional
+import weakref
+from typing import Any, Dict, List, Optional, Union
+
+from dwarffi.core import (
+    BoundArrayView,
+    BoundTypeInstance,
+    Ptr,
+    VtypeBaseType,
+    VtypeEnum,
+    VtypeJsonGroup,
+    VtypeUserType,
+    load_isf_json,
+)
 
 
 class DFFI:

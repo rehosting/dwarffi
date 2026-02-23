@@ -1,5 +1,7 @@
 import json
+
 import pytest
+
 from dwarffi.dffi import DFFI
 
 

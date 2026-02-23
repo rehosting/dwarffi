@@ -5,5 +5,5 @@ except Exception:
     __version__ = "0+unknown"
 
 __all__ = ["__version__"]
-from .dffi import DFFI
 from .core import *
+from .dffi import DFFI

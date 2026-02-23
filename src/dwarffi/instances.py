@@ -1,7 +1,7 @@
 import struct
-from typing import Any, Dict, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
-from .types import VtypeUserType, VtypeBaseType, VtypeEnum
+from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
 # Prevents circular import with parser.py
 if TYPE_CHECKING:
@@ -494,7 +494,7 @@ class BoundTypeInstance:
                 f_def = type_def.fields[target_name]
                 return f_def, current_offset + f_def.offset
 
-            for f_name, f_def in type_def.fields.items():
+            for _, f_def in type_def.fields.items():
                 if f_def.anonymous:
                     sub_type = self._instance_vtype_accessor.get_user_type(
                         f_def.type_info.get("name")
