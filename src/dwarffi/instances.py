@@ -129,8 +129,21 @@ class BoundTypeInstance:
                 return
             if compiled_struct_obj is None:
                 raise ValueError(f"Cannot get compiled struct for base type '{base_type_def.name}' to write value.")
+            
+            # Handle wrapping for unsigned types
             if base_type_def.signed is False and isinstance(new_value, int) and new_value < 0:
                 new_value = new_value % (1 << (base_type_def.size * 8))
+            
+            # Handle wrapping for signed types (C-style overflow/underflow)
+            if base_type_def.signed is True and isinstance(new_value, int):
+                bits = base_type_def.size * 8
+                max_signed = (1 << (bits - 1)) - 1
+                min_signed = -(1 << (bits - 1))
+                if new_value > max_signed:
+                    new_value = new_value - (1 << bits)
+                if new_value < min_signed:
+                    new_value = ((new_value + (1 << bits)) % (1 << bits)) + min_signed
+                    
             try:
                 compiled_struct_obj.pack_into(self._instance_buffer, self._instance_offset, new_value)
             except struct.error as e:
