@@ -58,7 +58,11 @@ class BoundArrayView:
                 f"Array index {index} out of bounds for array '{self._array_field_name}' of size {self._array_count}.")
         return self._array_start_offset_in_parent + (index * self._element_size)
 
-    def __getitem__(self, index: int) -> Any:
+    def __getitem__(self, index: Union[int, slice]) -> Any:
+        if isinstance(index, slice):
+            start, stop, step = index.indices(self._array_count)
+            return [self[i] for i in range(start, stop, step)]
+            
         element_offset = self._get_element_offset_in_parent_struct(index)
         return self._parent_instance._read_data(
             self._array_subtype_info,
