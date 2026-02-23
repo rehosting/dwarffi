@@ -105,7 +105,7 @@ class DFFI:
                 for k, v in init.items():
                     setattr(instance, k, v)
             elif isinstance(init, (int, str)):
-                instance._value = init
+                instance[0] = init
             else:
                 raise TypeError(f"Unsupported initializer type: {type(init)}")
                 
@@ -125,7 +125,7 @@ class DFFI:
             # Casting an int to a primitive type (allocates a new detached wrapper)
             buf = bytearray(getattr(t, 'size', 8))
             instance = self._isf_group.create_instance(t, buf)
-            instance._value = value
+            instance[0] = value
             return instance
 
         # Re-casting an existing buffer to a new type
