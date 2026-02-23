@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling>=1.21.0"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "dwarffi"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Basic Python project scaffold for dwarffi."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -33,3 +33,8 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 known-first-party = ["dwarffi"]
 
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/dwarffi/_version.py"

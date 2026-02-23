@@ -2,11 +2,11 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: ["main"]
 
 jobs:
-  lint-and-test:
+  lint-test:
+    # If release workflow commits with [skip ci], don't rerun CI.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -14,19 +14,15 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      # gcc is present on ubuntu-latest; dwarf2json is not.
-      # Your integration tests skip if dwarf2json isn't present; installing it lets them run. :contentReference[oaicite:4]{index=4}
-      - name: Set up Go (for dwarf2json)
-        uses: actions/setup-go@v5
+      # Optional: install dwarf2json so integration tests that depend on it can run.
+      - uses: actions/setup-go@v5
         with:
           go-version: "stable"
         continue-on-error: true
@@ -43,15 +39,13 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Install package (dev)
+      - name: Install (dev)
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
 
-      - name: Lint (ruff)
-        run: |
-          ruff check .
+      - name: Ruff
+        run: ruff check .
 
-      - name: Tests (pytest)
-        run: |
-          pytest -q
+      - name: Pytest
+        run: pytest -q
