@@ -36,7 +36,7 @@ def test_struct_field_write_and_to_bytes(base_types_little_endian) -> None:
     inst.id = 999
     assert struct.unpack_from("<i", buf, 0)[0] == 999
 
-    b = inst.to_bytes()
+    b = inst._to_bytes()
     assert isinstance(b, bytes)
     assert len(b) == 8
 
