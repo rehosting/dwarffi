@@ -11,6 +11,17 @@ from dwarffi.core import (
     Ptr,
     BoundArrayView
 )
+import os
+import shutil
+import subprocess
+import tempfile
+import json
+import lzma
+import os
+import shutil
+import subprocess
+import tempfile
+from typing import List, Optional
 
 class DFFI:
     def __init__(self, isf_path: Optional[str] = None):
@@ -331,3 +342,89 @@ class DFFI:
         """
         weakref.finalize(cdata, destructor, cdata)
         return cdata
+    
+    def cdef(
+        self,
+        source: str,
+        compiler: str = "gcc",
+        compiler_flags: Optional[List[str]] = None,
+        dwarf2json_cmd: str = "dwarf2json",
+        save_isf_to: Optional[str] = None,
+    ):
+        """
+        Compile C code on the fly, extract DWARF info via dwarf2json,
+        and load the resulting types into this DFFI instance.
+
+        :param source: The raw C code string to compile.
+        :param compiler: The compiler executable (e.g., 'gcc', 'clang', 'arm-none-eabi-gcc').
+        :param compiler_flags: List of flags to pass to the compiler. Defaults to ['-O0', '-g', '-gdwarf-4', '-fno-eliminate-unused-debug-types', '-c'].
+        :param dwarf2json_cmd: The name or path of the dwarf2json executable.
+        :param save_isf_to: Optional file path to save the generated ISF (supports .json and .json.xz).
+        """
+        if not shutil.which(dwarf2json_cmd):
+            raise RuntimeError(
+                f"'{dwarf2json_cmd}' not found in PATH.\n"
+                "dwarffi requires dwarf2json to extract type info from compiled C code.\n"
+                "Please download or build it from: https://github.com/volatilityfoundation/dwarf2json"
+            )
+
+        compiler_exe = compiler.split()[0]
+        if not shutil.which(compiler_exe):
+            raise RuntimeError(f"Compiler '{compiler_exe}' not found in PATH.")
+
+        if compiler_flags is None:
+            compiler_flags = ["-O0", "-g", "-gdwarf-4", "-fno-eliminate-unused-debug-types", "-c"]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            c_file = os.path.join(tmpdir, "source.c")
+            # You are compiling with -c, so this should be an object file
+            o_file = os.path.join(tmpdir, "source.o")
+
+            with open(c_file, "w", encoding="utf-8") as f:
+                f.write(source)
+
+            # 1) Compile (object file)
+            cmd_compile = compiler.split() + compiler_flags + [c_file, "-o", o_file]
+            try:
+                subprocess.run(cmd_compile, check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(f"Compilation failed:\nCommand: {' '.join(cmd_compile)}\nStderr: {e.stderr}")
+
+            # 2) Run dwarf2json (types first; fallback to --elf if needed)
+            cmd_d2j = [dwarf2json_cmd, "linux", "--elf-types", o_file]
+            try:
+                res = subprocess.run(cmd_d2j, check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError:
+                cmd_d2j = [dwarf2json_cmd, "linux", "--elf", o_file]
+                try:
+                    res = subprocess.run(cmd_d2j, check=True, capture_output=True, text=True)
+                except subprocess.CalledProcessError as e:
+                    raise RuntimeError(f"dwarf2json failed:\nCommand: {' '.join(cmd_d2j)}\nStderr: {e.stderr}")
+
+            # 3) Parse
+            try:
+                isf_dict = json.loads(res.stdout)
+            except json.JSONDecodeError as e:
+                raise RuntimeError(f"Failed to parse dwarf2json output: {e}\nOutput head: {res.stdout[:500]}")
+
+            # 4) Optionally save the ISF to disk
+            if save_isf_to:
+                out_path = os.path.abspath(save_isf_to)
+                os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+                if out_path.endswith(".json.xz"):
+                    with lzma.open(out_path, "wt", encoding="utf-8") as xf:
+                        json.dump(isf_dict, xf, indent=2, sort_keys=True)
+                elif out_path.endswith(".json"):
+                    with open(out_path, "w", encoding="utf-8") as jf:
+                        json.dump(isf_dict, jf, indent=2, sort_keys=True)
+                else:
+                    raise ValueError("save_isf_to must end with '.json' or '.json.xz'")
+
+            # 5) Load into this DFFI instance
+            from dwarffi.parser import isf_from_dict
+            vtype_obj = isf_from_dict(isf_dict)
+
+            pseudo_path = f"<cdef_{id(source)}>"
+            self._isf_group._file_order.append(pseudo_path)
+            self._isf_group.vtypejsons[pseudo_path] = vtype_obj
