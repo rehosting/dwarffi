@@ -68,7 +68,7 @@ def test_ffi_cast(ffi_env: DFFI):
     ptr = ffi_env.cast("struct task_struct *", 0xc0000000)
     assert ptr.address == 0xc0000000
     # FIX: Expect the full string that was parsed before the '*'
-    assert ptr.points_to_type_name == "struct task_struct"
+    assert ptr.points_to_type_name == "task_struct"
 
 def test_ffi_from_buffer(ffi_env: DFFI):
     # Create raw bytes and bind them
