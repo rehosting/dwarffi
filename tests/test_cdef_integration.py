@@ -27,7 +27,7 @@ def test_cdef_native_gcc():
             void* p;
         };
         enum my_state { STATE_IDLE = 0, STATE_RUNNING = 1 };
-    """, compiler=GCC, save_isf_to="/tmp/out.json")
+    """, compiler=GCC)
     
     # Verify the types were extracted
     assert ffi.sizeof("struct native_test") > 0
