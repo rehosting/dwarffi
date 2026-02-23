@@ -23,6 +23,19 @@ class DFFI:
             self._isf_group._file_order.append(path)
             self._isf_group.vtypejsons[path] = load_isf_json(path)
 
+    def _make_subtype_info(self, base_name: str) -> dict:
+        """Helper to create ISF-compatible type_info references."""
+        base_t = self.typeof(base_name)
+        if isinstance(base_t, dict):
+            return base_t
+        elif isinstance(base_t, VtypeBaseType):
+            return {"kind": "base", "name": base_t.name}
+        elif isinstance(base_t, VtypeUserType):
+            return {"kind": base_t.kind, "name": base_t.name}
+        elif isinstance(base_t, VtypeEnum):
+            return {"kind": "enum", "name": base_t.name}
+        return {"name": base_name}
+
     def typeof(self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView]) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
         if isinstance(ctype, BoundTypeInstance):
             return ctype._instance_type_def
@@ -39,12 +52,14 @@ class DFFI:
             if m:
                 base = m.group(1).strip()
                 count = int(m.group(2)) if m.group(2) else 0
-                return {"kind": "array", "count": count, "subtype": {"name": base}}
+                subtype_info = self._make_subtype_info(base)
+                return {"kind": "array", "count": count, "subtype": subtype_info}
                 
             # Pointer parsing (e.g. "struct task_struct *")
             if ctype.endswith("*"):
                 base_name = ctype[:-1].strip()
-                return {"kind": "pointer", "subtype": {"name": base_name}}
+                subtype_info = self._make_subtype_info(base_name)
+                return {"kind": "pointer", "subtype": subtype_info}
                 
             t = self._isf_group.get_type(ctype)
             if not t:
