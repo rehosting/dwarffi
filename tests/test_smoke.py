@@ -51,5 +51,5 @@ def test_load_isf_json_filelike_and_basic_read_write() -> None:
 
     int_buf = bytearray(4)
     int_inst = isf.create_instance("int", int_buf)
-    int_inst._value = 7
-    assert int_inst._value == 7
+    int_inst[0] = 7
+    assert int_inst[0] == 7
