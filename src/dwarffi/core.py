@@ -25,41 +25,42 @@ How to Use:
 1. Load an ISF file (JSON or JSON.XZ):
 
     from dwarffi.core import load_isf_json
-   isf = load_isf_json("vmlinux.isf.json.xz")
+    isf = load_isf_json("vmlinux.isf.json.xz")
 
 2. Access type definitions:
 
-   my_struct_def = isf.get_user_type("my_struct")
-   int_def = isf.get_base_type("int")
-   enum_def = isf.get_enum("my_enum")
+    my_struct_def = isf.get_user_type("my_struct")
+    int_def = isf.get_base_type("int")
+    enum_def = isf.get_enum("my_enum")
 
 3. Create an instance of a type bound to a buffer:
 
-   buf = bytearray(my_struct_def.size)
-   instance = isf.create_instance("my_struct", buf)
-   print(instance.field1)
-   instance.field1 = 42
-   print(instance.to_bytes())
+    buf = bytearray(my_struct_def.size)
+    instance = isf.create_instance("my_struct", buf)
+    print(instance.field1)
+    instance.field1 = 42
+    print(instance.to_bytes())
 
 4. Work with arrays and enums:
 
-   arr = instance.array_field
-   arr[0] = 123
-   print(arr[0])
-   print(instance.enum_field.name)
+    arr = instance.array_field
+    arr[0] = 123
+    print(arr[0])
+    print(instance.enum_field.name)
 
 5. Lookup symbols by address:
 
-   syms = isf.get_symbols_by_address(0xffffffffdeadbeef)
-   for sym in syms:
-       print(sym.name, sym.address)
+    syms = isf.get_symbols_by_address(0xffffffffdeadbeef)
+    for sym in syms:
+        print(sym.name, sym.address)
 
 6. Create and manipulate base/enum type instances:
 
-   int_buf = bytearray(int_def.size)
-   int_instance = isf.create_instance("int", int_buf)
-   int_instance._value = 123
-   print(int_instance._value)
+    int_buf = bytearray(int_def.size)
+    int_instance = isf.create_instance("int", int_buf)
+    int_instance[0] = 123
+    print(int_instance[0])
+    print(int(int_instance))
 
 Command Line Usage:
 -------------------
@@ -382,11 +383,10 @@ class BoundTypeInstance:
         self._instance_offset = instance_offset_in_buffer
         self._instance_cache = {}
 
-    @property
-    def _value(self) -> Any:
+    def _get_value(self) -> Any:
         if isinstance(self._instance_type_def, VtypeUserType):
             raise AttributeError(
-                f"'{self._instance_type_name}' is a struct/union and does not have a direct '._value' attribute. Access its fields instead.")
+                f"'{self._instance_type_name}' is a struct/union and does not have a direct value. Access its fields instead.")
         if isinstance(self._instance_type_def, VtypeBaseType):
             base_type_def = self._instance_type_def
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -422,13 +422,12 @@ class BoundTypeInstance:
                     f"Error unpacking value for enum '{enum_def.name}': {e}") from e
         else:
             raise TypeError(
-                f"'._value' property not applicable to internal type: {type(self._instance_type_def).__name__}")
+                f"Cannot get value on internal type: {type(self._instance_type_def).__name__}")
 
-    @_value.setter
-    def _value(self, new_value: Any):
+    def _set_value(self, new_value: Any):
         if isinstance(self._instance_type_def, VtypeUserType):
             raise AttributeError(
-                f"Cannot set '._value' on a struct/union '{self._instance_type_name}'. Set its fields instead.")
+                f"Cannot set a direct value on a struct/union '{self._instance_type_name}'. Set its fields instead.")
         if isinstance(self._instance_type_def, VtypeBaseType):
             base_type_def = self._instance_type_def
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -484,9 +483,47 @@ class BoundTypeInstance:
                     f"Error packing value for enum '{enum_def.name}': {e}") from e
         else:
             raise TypeError(
-                f"'._value' property setter not applicable to internal type: {type(self._instance_type_def).__name__}")
-        if '_value' in self._instance_cache:
-            del self._instance_cache['_value']
+                f"Setter not applicable to internal type: {type(self._instance_type_def).__name__}")
+
+    def __int__(self) -> int:
+        if isinstance(self._instance_type_def, (VtypeBaseType, VtypeEnum)):
+            return int(self._get_value())
+        if isinstance(self._instance_type_def, VtypeUserType):
+            raise TypeError(f"Cannot convert struct/union '{self._instance_type_name}' to int")
+        return NotImplemented
+
+    def __index__(self) -> int:
+        return self.__int__()
+
+    def __float__(self) -> float:
+        if isinstance(self._instance_type_def, VtypeBaseType) and self._instance_type_def.kind == "float":
+            return float(self._get_value())
+        raise TypeError(f"Cannot convert type '{self._instance_type_name}' to float")
+
+    def __bool__(self) -> bool:
+        if isinstance(self._instance_type_def, (VtypeBaseType, VtypeEnum)):
+            val = self._get_value()
+            if isinstance(val, EnumInstance):
+                return bool(int(val))
+            return bool(val)
+        return True
+
+    def __getitem__(self, index: int) -> Any:
+        if index == 0 and isinstance(self._instance_type_def, (VtypeBaseType, VtypeEnum)):
+            return self._get_value()
+        if isinstance(self._instance_type_def, VtypeUserType):
+            if index == 0:
+                return self
+            raise IndexError("Struct/Union index out of range (only [0] is supported for dereferencing)")
+        raise TypeError(f"'{self._instance_type_name}' object is not subscriptable")
+
+    def __setitem__(self, index: int, value: Any):
+        if index == 0 and isinstance(self._instance_type_def, (VtypeBaseType, VtypeEnum)):
+            self._set_value(value)
+            return
+        if isinstance(self._instance_type_def, VtypeUserType):
+            raise TypeError("Cannot overwrite entire struct/union via subscript assignment. Assign to fields instead.")
+        raise TypeError(f"'{self._instance_type_name}' object does not support item assignment")
 
     def _read_data(self, field_type_info: Dict[str, Any], field_offset_in_struct: int, field_name_for_error: str) -> Any:
         kind = field_type_info.get("kind")
@@ -752,7 +789,7 @@ class BoundTypeInstance:
                 f"Cannot write to field '{field_name_for_error}' of unhandled type kind '{kind}'.")
 
     def __getattr__(self, name: str) -> Any:
-        if name.startswith('_instance_'):
+        if name.startswith('_instance_') or name.startswith('__'):
             return super().__getattribute__(name)
 
         if isinstance(self._instance_type_def, VtypeUserType):
@@ -776,14 +813,10 @@ class BoundTypeInstance:
                 raise AttributeError(f"Error processing field '{name}': {e}") from e
 
         raise AttributeError(
-            f"Type '{self._instance_type_name}' (kind: {self._instance_type_def.__class__.__name__}) has no attribute '{name}'. Use '._value' for base/enum types.")
+            f"Type '{self._instance_type_name}' (kind: {self._instance_type_def.__class__.__name__}) has no attribute '{name}'. Use '[0]' or cast to int/float for base/enum types.")
 
     def __setattr__(self, name: str, new_value: Any):
-        if name.startswith('_instance_'):
-            super().__setattr__(name, new_value)
-            return
-
-        if name == "_value":
+        if name.startswith('_instance_') or name.startswith('__'):
             super().__setattr__(name, new_value)
             return
 
@@ -811,7 +844,7 @@ class BoundTypeInstance:
                 raise AttributeError(f"Error setting field '{name}': {e}") from e
 
         raise AttributeError(
-            f"Cannot set attribute '{name}' on type '{self._instance_type_name}' (kind: {self._instance_type_def.__class__.__name__}). Use '._value' for base/enum types.")
+            f"Cannot set attribute '{name}' on type '{self._instance_type_name}' (kind: {self._instance_type_def.__class__.__name__}). Use '[0]' for base/enum types.")
 
     def to_bytes(self) -> bytes:
         size = self._instance_type_def.size
@@ -836,8 +869,6 @@ class BoundTypeInstance:
         attrs = list(super().__dir__())
         if isinstance(self._instance_type_def, VtypeUserType):
             attrs.extend(self._instance_type_def.fields.keys())
-        if isinstance(self._instance_type_def, (VtypeBaseType, VtypeEnum)):
-            attrs.append('_value')
         return sorted(list(set(a for a in attrs if a != '_instance_cache')))
 
 
@@ -1375,9 +1406,10 @@ if __name__ == '__main__':
                 struct.pack_into("<i", int_buffer, 0, 12345)
                 int_instance = isf_data.create_instance("int", int_buffer)
                 print(f"  Created int_instance: {int_instance}")
-                print(f"  int_instance._value: {int_instance._value}")
-                int_instance._value = 54321
-                print(f"  Modified int_instance._value: {int_instance._value}")
+                print(f"  int_instance[0]: {int_instance[0]}")
+                int_instance[0] = 54321
+                print(f"  Modified int_instance[0]: {int_instance[0]}")
+                print(f"  int(int_instance): {int(int_instance)}")
                 print(
                     f"  int_instance.to_bytes() (hex): {int_instance.to_bytes().hex()}")
             else:
