@@ -1,4 +1,5 @@
 import weakref
+import re
 from typing import Any, Dict, Optional, Union, List
 from dwarffi.core import (
     VtypeJsonGroup, 
@@ -22,33 +23,54 @@ class DFFI:
             self._isf_group._file_order.append(path)
             self._isf_group.vtypejsons[path] = load_isf_json(path)
 
-    def typeof(self, ctype: Union[str, BoundTypeInstance, Ptr]) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
+    def typeof(self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView]) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
         if isinstance(ctype, BoundTypeInstance):
             return ctype._instance_type_def
         if isinstance(ctype, Ptr):
-            return ctype.points_to_type_info
+            return {"kind": "pointer", "subtype": ctype.points_to_type_info}
+        if isinstance(ctype, BoundArrayView):
+            return {"kind": "array", "count": ctype._array_count, "subtype": ctype._array_subtype_info}
             
         if isinstance(ctype, str):
+            ctype = ctype.strip()
+            
+            # 2. Dynamic Array parsing (e.g. "int[10]" or "char[]")
+            m = re.match(r"^(.*?)\[(\d*)\]$", ctype)
+            if m:
+                base = m.group(1).strip()
+                count = int(m.group(2)) if m.group(2) else 0
+                return {"kind": "array", "count": count, "subtype": {"name": base}}
+                
+            # Pointer parsing (e.g. "struct task_struct *")
+            if ctype.endswith("*"):
+                base_name = ctype[:-1].strip()
+                return {"kind": "pointer", "subtype": {"name": base_name}}
+                
             t = self._isf_group.get_type(ctype)
             if not t:
-                # Handle basic pointer types dynamically if needed
-                if ctype.endswith("*"):
-                    base_name = ctype[:-1].strip()
-                    return {"kind": "pointer", "subtype": {"name": base_name}}
                 raise KeyError(f"Unknown DWARF type: '{ctype}'")
             return t
             
-        raise TypeError(f"Expected string or BoundTypeInstance, got {type(ctype)}")
+        raise TypeError(f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}")
 
     def sizeof(self, ctype: Union[str, BoundTypeInstance, Any]) -> int:
-        if isinstance(ctype, BoundTypeInstance):
-            size = ctype._instance_type_def.size
-        elif isinstance(ctype, str):
-            if ctype.endswith("*"):
-                return self._isf_group.get_base_type("pointer").size
-            size = self.typeof(ctype).size
-        elif hasattr(ctype, "size"):
-            size = ctype.size
+        t = self.typeof(ctype) if isinstance(ctype, str) else ctype
+        
+        if isinstance(t, BoundTypeInstance):
+            size = t._instance_type_def.size
+        elif isinstance(t, dict):
+            if t.get("kind") == "pointer":
+                size = self._isf_group.get_base_type("pointer").size
+            elif t.get("kind") == "array":
+                subtype_name = t.get("subtype", {}).get("name")
+                if not subtype_name:
+                    raise ValueError(f"Array subtype missing name in {t}")
+                elem_size = self.sizeof(subtype_name)
+                size = elem_size * t.get("count", 0)
+            else:
+                size = self._isf_group.get_type_size(t)
+        elif hasattr(t, "size"):
+            size = t.size
         else:
             raise TypeError(f"Cannot determine size of {ctype}")
             
@@ -66,12 +88,25 @@ class DFFI:
         
         for field_name in fields_or_indexes:
             if isinstance(current_type, VtypeUserType):
-                field = current_type.fields.get(field_name)
+                # 4. Search including anonymous fields recursively
+                def _find_field_recursive(t_def, name, current_off):
+                    if name in t_def.fields:
+                        f = t_def.fields[name]
+                        return f, current_off + f.offset
+                    for f in t_def.fields.values():
+                        if f.anonymous:
+                            sub_t = self._isf_group.get_type(f.type_info.get("name"))
+                            if isinstance(sub_t, VtypeUserType):
+                                res = _find_field_recursive(sub_t, name, current_off + f.offset)
+                                if res[0]:
+                                    return res
+                    return None, None
+                
+                field, field_offset = _find_field_recursive(current_type, field_name, 0)
                 if not field:
                     raise KeyError(f"Type '{current_type.name}' has no field '{field_name}'")
-                if field.offset is None:
-                    raise ValueError(f"Field '{field_name}' has an unknown offset.")
-                offset += field.offset
+                
+                offset += field_offset
                 
                 # Update current_type for nested structures
                 if field.type_info.get("kind") in ["struct", "union"]:
@@ -81,19 +116,96 @@ class DFFI:
                 
         return offset
 
-    def addressof(self, cdata: BoundTypeInstance, *fields_or_indexes) -> int:
+    def addressof(self, cdata: BoundTypeInstance, *fields_or_indexes) -> Ptr:
         """
         Returns the offset/address of the buffer. In a rehosting context, 
         this represents the local buffer offset unless mapped via a memory backend.
         """
         base_addr = cdata._instance_offset
+        subtype_name = cdata._instance_type_name
+        
         if fields_or_indexes:
-            # We reuse offsetof logic by passing the type name
-            return base_addr + self.offsetof(cdata._instance_type_name, *fields_or_indexes)
-        return base_addr
+            base_addr += self.offsetof(cdata._instance_type_name, *fields_or_indexes)
+            t = self.typeof(cdata._instance_type_name)
+            current_type = t
+            for field_name in fields_or_indexes:
+                def _find_type(t_def, name):
+                    if name in t_def.fields: return t_def.fields[name].type_info
+                    for f in t_def.fields.values():
+                        if f.anonymous:
+                            sub_t = self._isf_group.get_type(f.type_info.get("name"))
+                            if isinstance(sub_t, VtypeUserType):
+                                res = _find_type(sub_t, name)
+                                if res: return res
+                    return None
+                
+                type_info = _find_type(current_type, field_name)
+                subtype_name = type_info.get("name") if type_info else "void"
+                if type_info and type_info.get("kind") in ["struct", "union"]:
+                    current_type = self._isf_group.get_type(subtype_name)
+                else:
+                    current_type = None
 
-    def new(self, ctype: str, init: Any = None) -> BoundTypeInstance:
+        return Ptr(base_addr, {"name": subtype_name}, self._isf_group)
+
+    def _deep_init(self, instance: Any, init: Any):
+        """3. Deep Struct Initialization."""
+        if isinstance(init, dict) and isinstance(instance, BoundTypeInstance):
+            for k, v in init.items():
+                if hasattr(instance, k):
+                    field_val = getattr(instance, k)
+                    if isinstance(field_val, (BoundTypeInstance, BoundArrayView)) and isinstance(v, (dict, list)):
+                        self._deep_init(field_val, v)
+                    else:
+                        setattr(instance, k, v)
+        elif isinstance(init, list) and isinstance(instance, BoundArrayView):
+            for i, v in enumerate(init):
+                if isinstance(instance[i], (BoundTypeInstance, BoundArrayView)) and isinstance(v, (dict, list)):
+                    self._deep_init(instance[i], v)
+                else:
+                    instance[i] = v
+        elif isinstance(instance, BoundTypeInstance):
+            instance[0] = init
+
+    def new(self, ctype: str, init: Any = None) -> Union[BoundTypeInstance, BoundArrayView]:
         t = self.typeof(ctype)
+        
+        # 2. Handle dynamic arrays natively 
+        if isinstance(t, dict) and t.get("kind") == "array":
+            if init is not None:
+                if isinstance(init, (bytes, bytearray, str)):
+                    if isinstance(init, str):
+                        init = init.encode('utf-8')
+                    if t.get("count") == 0:
+                        t["count"] = len(init) + 1  # Add null terminator for C-strings
+                elif isinstance(init, list):
+                    if t.get("count") == 0:
+                        t["count"] = len(init)
+                        
+            size = self.sizeof(t)
+            buf = bytearray(size)
+            
+            # Create a dummy struct to hold the array so BoundArrayView works flawlessly
+            # without modifying the core instances engine.
+            dummy_name = f"__dummy_{id(buf)}"
+            primary_isf_path = self._isf_group.paths[0]
+            self._isf_group.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
+                "kind": "struct", "size": size,
+                "fields": {"arr": {"offset": 0, "type": t}}
+            }
+            self._isf_group.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+            
+            instance = self._isf_group.create_instance(dummy_name, buf)
+            arr_view = instance.arr
+            
+            if init is not None:
+                if isinstance(init, (bytes, bytearray)):
+                    buf[:len(init)] = init
+                elif isinstance(init, list):
+                    self._deep_init(arr_view, init)
+                    
+            return arr_view
+            
         if getattr(t, 'size', None) is None:
             raise ValueError(f"Cannot allocate memory for type '{ctype}' with unknown size.")
             
@@ -101,13 +213,7 @@ class DFFI:
         instance = self._isf_group.create_instance(t, buf)
         
         if init is not None:
-            if isinstance(init, dict):
-                for k, v in init.items():
-                    setattr(instance, k, v)
-            elif isinstance(init, (int, str)):
-                instance[0] = init
-            else:
-                raise TypeError(f"Unsupported initializer type: {type(init)}")
+            self._deep_init(instance, init)
                 
         return instance
 
@@ -122,8 +228,10 @@ class DFFI:
             if isinstance(t, dict) and t.get("kind") == "pointer":
                 return Ptr(value, t.get("subtype"), self._isf_group)
             
-            # Casting an int to a primitive type (allocates a new detached wrapper)
-            buf = bytearray(getattr(t, 'size', 8))
+            if hasattr(t, "size"):
+                buf = bytearray(t.size)
+            else:
+                buf = bytearray(8)
             instance = self._isf_group.create_instance(t, buf)
             instance[0] = value
             return instance
@@ -161,13 +269,16 @@ class DFFI:
 
         dest_buf[dest_off:dest_off+n] = src_buf[src_off:src_off+n]
 
-    def string(self, cdata: Union[BoundTypeInstance, Ptr], maxlen: int = 4096) -> bytes:
+    def string(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = 4096) -> bytes:
+        if isinstance(cdata, BoundArrayView):
+            cdata = cdata._parent_instance 
+            
         if isinstance(cdata, BoundTypeInstance):
-            raw_bytes = cdata.to_bytes()
+            raw_bytes = cdata._instance_buffer[cdata._instance_offset:]
             if maxlen > 0:
                 raw_bytes = raw_bytes[:maxlen]
             null_idx = raw_bytes.find(b'\x00')
-            return raw_bytes[:null_idx] if null_idx != -1 else raw_bytes
+            return bytes(raw_bytes[:null_idx] if null_idx != -1 else raw_bytes)
             
         if isinstance(cdata, Ptr):
             # Without a memory backend plugged in, a raw Ptr can't be dereferenced for string reading.
