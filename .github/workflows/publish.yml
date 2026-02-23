@@ -44,6 +44,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Force package version for build (no commit)
+        run: |
+          # dist name "dwarffi" -> env suffix "DWARFFI"
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DWARFFI=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
+          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
+
       - name: Build distributions
         run: |
           python -m pip install --upgrade pip
