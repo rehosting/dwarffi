@@ -1,16 +1,17 @@
-name: Release (tag + GitHub Release + PyPI)
+name: Release PyPI
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
-  contents: write   # create tags + releases
-  id-token: write   # PyPI trusted publishing
+  contents: write
+  id-token: write
 
 concurrency:
-  group: release-main
+  group: "release"
   cancel-in-progress: false
 
 jobs:
@@ -18,26 +19,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Install dependencies and label git workspace safe
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install git
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0    # required for tags/history
-          fetch-tags: true  # ensure tags are present
+          fetch-depth: 0   # tags/history required
 
+      # IMPORTANT: run version-increment AFTER checkout so .git exists
       - name: Get next version
         uses: reecetech/version-increment@2023.10.1
         id: version
         with:
           use_api: true
 
-      - name: Create tag (if not exists)
+      - name: Create and push tag (if missing)
         shell: bash
         run: |
           set -euxo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          TAG="v${VERSION}"
-
-          # tags should already be available due to checkout settings, but this is safe
+          TAG="${{ steps.version.outputs.v-version }}"
           git fetch --tags --force
 
           if git rev-parse "$TAG" >/dev/null 2>&1; then
@@ -48,22 +52,13 @@ jobs:
           git tag -a "$TAG" -m "$TAG"
           git push origin "$TAG"
 
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euxo pipefail
-          VERSION="${{ steps.version.outputs.version }}"
-          gh release create "v${VERSION}" --generate-notes
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
 
-      - name: Build
+      - name: Build distributions
         run: |
           python -m pip install --upgrade pip
           python -m pip install build
@@ -71,3 +66,15 @@ jobs:
 
       - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.version.outputs.v-version }}
+          name: Release ${{ steps.version.outputs.v-version }}
+          generate_release_notes: true
+          prerelease: false
+          files: |
+            dist/*
