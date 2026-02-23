@@ -259,7 +259,8 @@ class BoundTypeInstance:
             raise TypeError("Cannot overwrite entire struct/union via subscript assignment. Assign to fields instead.")
         raise TypeError(f"'{self._instance_type_name}' object does not support item assignment")
 
-    def _read_data(self, field_type_info: Dict[str, Any], field_offset_in_struct: int, field_name_for_error: str) -> Any:
+    def _read_data(self, in_field_type_info: Dict[str, Any], field_offset_in_struct: int, field_name_for_error: str) -> Any:
+        field_type_info = self._instance_vtype_accessor.resolve_type_info(in_field_type_info)
         kind = field_type_info.get("kind")
         name = field_type_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct
@@ -308,8 +309,9 @@ class BoundTypeInstance:
         else:
             raise ValueError(f"Unsupported/invalid type kind '{kind}' for field '{field_name_for_error}'.")
 
-    def _write_data(self, field_type_info: Dict[str, Any], field_offset_in_struct: int,
+    def _write_data(self, in_field_type_info: Dict[str, Any], field_offset_in_struct: int,
                     value_to_write: Any, field_name_for_error: str):
+        field_type_info = self._instance_vtype_accessor.resolve_type_info(in_field_type_info)
         kind = field_type_info.get("kind")
         name = field_type_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct

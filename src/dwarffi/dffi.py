@@ -61,10 +61,24 @@ class DFFI:
                 subtype_info = self._make_subtype_info(base_name)
                 return {"kind": "pointer", "subtype": subtype_info}
                 
-            t = self._isf_group.get_type(ctype)
-            if not t:
-                raise KeyError(f"Unknown DWARF type: '{ctype}'")
-            return t
+            # ADD THIS: Resolve typedef strings so they decay into their true type immediately
+            resolved_info = self._isf_group.resolve_type_info({"kind": "typedef", "name": ctype})
+            
+            if resolved_info.get("kind") == "typedef":
+                # It didn't resolve to an alias in the dict, so treat it as a standard type name
+                t = self._isf_group.get_type(ctype)
+                if not t:
+                    raise KeyError(f"Unknown DWARF type: '{ctype}'")
+                return t
+            elif resolved_info.get("kind") in ("pointer", "array"):
+                # Typedefs pointing to raw pointers/arrays return dicts natively
+                return resolved_info
+            else:
+                # Typedef decayed to a base, struct, union, or enum name
+                t = self._isf_group.get_type(resolved_info["name"])
+                if not t:
+                    raise KeyError(f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'")
+                return t
             
         raise TypeError(f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}")
 

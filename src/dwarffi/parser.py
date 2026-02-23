@@ -27,6 +27,22 @@ class VtypeJson:
         self._raw_symbols: Dict[str, Any] = data.get("symbols", {})
         self._parsed_symbols_cache: Dict[str, VtypeSymbol] = {}
         self._address_to_symbol_list_cache: Optional[Dict[int, List[VtypeSymbol]]] = None
+        self._raw_typedefs: Dict[str, Any] = data.get("typedefs", {})
+    
+    def resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Unrolls typedefs into their underlying target type info."""
+        visited = set()
+        current = type_info
+        while current and current.get("kind") == "typedef":
+            name = current.get("name")
+            if not name: break
+            if name in visited:
+                raise ValueError(f"Circular typedef: {name}")
+            visited.add(name)
+            td = self._raw_typedefs.get(name)
+            if not td: break
+            current = td
+        return current
 
     def shift_symbol_addresses(self, delta: int):
         for _sym_name, sym_data in self._raw_symbols.items():
@@ -96,7 +112,8 @@ class VtypeJson:
                     self._address_to_symbol_list_cache.setdefault(symbol_obj.address, []).append(symbol_obj)
         return self._address_to_symbol_list_cache.get(target_address, [])
 
-    def get_type_size(self, type_info: Dict[str, Any]) -> Optional[int]:
+    def get_type_size(self, in_type_info: Dict[str, Any]) -> Optional[int]:
+        type_info = self.resolve_type_info(in_type_info)
         kind, name = type_info.get("kind"), type_info.get("name")
         if kind == "base":
             base_def = self.get_base_type(name) if name else None
@@ -171,6 +188,24 @@ class VtypeJsonGroup:
     @property
     def paths(self):
         return list(self._file_order)
+    
+    def resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
+        visited = set()
+        current = type_info
+        while current and current.get("kind") == "typedef":
+            name = current.get("name")
+            if not name: break
+            if name in visited:
+                raise ValueError(f"Circular typedef: {name}")
+            visited.add(name)
+            
+            td = None
+            for f in self._file_order:
+                td = self.vtypejsons[f]._raw_typedefs.get(name)
+                if td: break
+            if not td: break
+            current = td
+        return current
 
     def get_vtypejson(self, path): return self.vtypejsons[path]
 
@@ -202,7 +237,8 @@ class VtypeJsonGroup:
             results.extend(self.vtypejsons[f].get_symbols_by_address(target_address))
         return results
 
-    def get_type_size(self, type_info: dict):
+    def get_type_size(self, in_type_info: dict):
+        type_info = self.resolve_type_info(in_type_info)
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type_size(type_info): return res
 
