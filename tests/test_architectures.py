@@ -103,7 +103,7 @@ def test_32bit_little_endian_memory_layout(ffi_arm32_le: DFFI):
     ctx.status = 0xDEADBEEF
 
     # 2. Check the raw bytearray is correctly Little Endian packed
-    raw_bytes = ctx.to_bytes()
+    raw_bytes = ffi_arm32_le.to_bytes(ctx)
     assert len(raw_bytes) == 8
 
     # '<I' and '<i' are Little-Endian 32-bit unsigned/signed respectively
@@ -169,20 +169,20 @@ def test_base_type_casting_endianness(ffi_ppc64_be: DFFI, ffi_arm32_le: DFFI):
     be_long = ffi_ppc64_be.cast("long", 0x1122334455667788)
     assert be_long[0] == 0x1122334455667788
     # Big Endian means most significant byte comes first
-    assert be_long.to_bytes()[0] == 0x11
+    assert ffi_ppc64_be.to_bytes(be_long)[0] == 0x11
 
     # Test casting an integer to a Little Endian int
     le_int = ffi_arm32_le.cast("int", 0x11223344)
     assert le_int[0] == 0x11223344
     # Little Endian means least significant byte comes first
-    assert le_int.to_bytes()[0] == 0x44
+    assert ffi_arm32_le.to_bytes(le_int)[0] == 0x44
 
 
 def test_primitive_bounds_and_signedness(ffi_arm32_le: DFFI):
     # Ensure signed values roundtrip correctly
     int_inst = ffi_arm32_le.new("int", -1)
     assert int_inst[0] == -1
-    assert int_inst.to_bytes() == b"\xff\xff\xff\xff"
+    assert ffi_arm32_le.to_bytes(int_inst) == b"\xff\xff\xff\xff"
 
     # If the user sets it directly to a raw underflow, Python's int handles it
     # but let's test assignment wrap around

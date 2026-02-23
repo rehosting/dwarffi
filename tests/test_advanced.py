@@ -140,7 +140,7 @@ def test_addressof_api_alignment(adv_ffi_env: DFFI):
     outer = adv_ffi_env.new("outer_struct", {"inner": {"val": 77}})
 
     # Base address of the instance (relative to its own bytearray is 0)
-    base_addr = outer.offset
+    base_addr = adv_ffi_env.offset(outer)
 
     # addressof() should now return a Ptr object, just like CFFI
     ptr_outer = adv_ffi_env.addressof(outer)
