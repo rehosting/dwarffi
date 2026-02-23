@@ -37,20 +37,6 @@ jobs:
         with:
           use_api: true
 
-      - name: Create and push tag (if missing)
-        shell: bash
-        run: |
-          set -euxo pipefail
-          TAG="${{ steps.version.outputs.v-version }}"
-          git fetch --tags --force
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists; exiting."
-            exit 0
-          fi
-
-          git tag -a "$TAG" -m "$TAG"
-          git push origin "$TAG"
 
       - name: Set up Python
         uses: actions/setup-python@v5
