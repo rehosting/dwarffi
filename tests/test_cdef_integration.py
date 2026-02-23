@@ -16,27 +16,29 @@ ARM32 = shutil.which("arm-linux-gnueabi-gcc")
 AARCH64 = shutil.which("aarch64-linux-gnu-gcc")
 
 pytestmark = pytest.mark.skipif(
-    not HAS_DWARF2JSON, 
-    reason="dwarf2json not found in PATH. Integration tests skipped."
+    not HAS_DWARF2JSON, reason="dwarf2json not found in PATH. Integration tests skipped."
 )
 
 
 @pytest.mark.skipif(GCC is None, reason="gcc not found in PATH")
 def test_cdef_native_gcc():
     ffi = DFFI()
-    ffi.cdef("""
+    ffi.cdef(
+        """
         struct native_test {
             int a;
             long b;
             void* p;
         };
         enum my_state { STATE_IDLE = 0, STATE_RUNNING = 1 };
-    """, compiler=GCC)
-    
+    """,
+        compiler=GCC,
+    )
+
     # Verify the types were extracted
     assert ffi.sizeof("struct native_test") > 0
     assert ffi.sizeof("enum my_state") > 0
-    
+
     # Ensure we can instantiate and use them
     inst = ffi.new("struct native_test", {"a": 42})
     assert inst.a == 42
@@ -45,13 +47,16 @@ def test_cdef_native_gcc():
 @pytest.mark.skipif(CLANG is None, reason="clang not found in PATH")
 def test_cdef_native_clang():
     ffi = DFFI()
-    ffi.cdef("""
+    ffi.cdef(
+        """
         typedef unsigned char uint8_t;
         struct clang_test {
             uint8_t flags;
         };
-    """, compiler=CLANG)
-    
+    """,
+        compiler=CLANG,
+    )
+
     assert ffi.sizeof("struct clang_test") == 1
     inst = ffi.new("struct clang_test", {"flags": 255})
     assert inst.flags == 255
@@ -61,13 +66,16 @@ def test_cdef_native_clang():
 def test_cdef_cross_compile_arm32():
     """Tests that cross-compiling properly reflects 32-bit architecture sizes."""
     ffi = DFFI()
-    ffi.cdef("""
+    ffi.cdef(
+        """
         struct ptr_struct {
             void* ptr1;
             void* ptr2;
         };
-    """, compiler=ARM32)
-    
+    """,
+        compiler=ARM32,
+    )
+
     # 32-bit ARM has 4-byte pointers, so 2 pointers = 8 bytes
     assert ffi.sizeof("struct ptr_struct") == 8
     assert ffi.sizeof("void *") == 4
@@ -77,13 +85,16 @@ def test_cdef_cross_compile_arm32():
 def test_cdef_cross_compile_aarch64():
     """Tests that cross-compiling properly reflects 64-bit architecture sizes."""
     ffi = DFFI()
-    ffi.cdef("""
+    ffi.cdef(
+        """
         struct ptr_struct {
             void* ptr1;
             void* ptr2;
         };
-    """, compiler=AARCH64)
-    
+    """,
+        compiler=AARCH64,
+    )
+
     # 64-bit ARM has 8-byte pointers, so 2 pointers = 16 bytes
     assert ffi.sizeof("struct ptr_struct") == 16
     assert ffi.sizeof("void *") == 8
@@ -94,15 +105,20 @@ def test_cdef_compiler_error():
     """Ensures invalid C code properly raises a RuntimeError with compiler output."""
     ffi = DFFI()
     with pytest.raises(RuntimeError, match="Compilation failed"):
-        ffi.cdef("""
+        ffi.cdef(
+            """
             struct bad_struct {
                 unknown_type a; // This will fail compilation
             };
-        """, compiler=GCC)
+        """,
+            compiler=GCC,
+        )
+
 
 # ----------------------------
 # save_isf_to behavior
 # ----------------------------
+
 
 @pytest.mark.skipif(GCC is None, reason="gcc not found in PATH")
 def test_cdef_save_isf_to_json_writes_valid_json(tmp_path):
@@ -189,6 +205,7 @@ def test_cdef_save_isf_to_rejects_bad_extension(tmp_path):
 # Multi-call / ordering behavior
 # ----------------------------
 
+
 @pytest.mark.skipif(GCC is None, reason="gcc not found in PATH")
 def test_cdef_multiple_calls_accumulate_types(tmp_path):
     ffi = DFFI()
@@ -227,6 +244,7 @@ def test_cdef_same_type_name_first_wins_semantics():
 # Compiler flags & debug retention sanity
 # ----------------------------
 
+
 @pytest.mark.skipif(GCC is None, reason="gcc not found in PATH")
 def test_cdef_retains_unused_debug_types_by_default():
     """
@@ -249,6 +267,7 @@ def test_cdef_retains_unused_debug_types_by_default():
 # ----------------------------
 # Error handling / diagnostics
 # ----------------------------
+
 
 def test_cdef_missing_compiler_raises():
     ffi = DFFI()
@@ -308,6 +327,7 @@ def test_cdef_dwarf2json_failure_raises_runtimeerror(monkeypatch, tmp_path):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     import subprocess as _subprocess
+
     monkeypatch.setattr(_subprocess, "run", fake_run)
 
     with pytest.raises(RuntimeError, match=r"dwarf2json failed"):
@@ -317,6 +337,7 @@ def test_cdef_dwarf2json_failure_raises_runtimeerror(monkeypatch, tmp_path):
 # ----------------------------
 # Architecture / pointer width tests
 # ----------------------------
+
 
 @pytest.mark.skipif(ARM32 is None, reason="arm-linux-gnueabi-gcc not found in PATH")
 def test_cdef_cross_compile_arm32_pointer_size():
@@ -353,6 +374,7 @@ def test_cdef_cross_compile_aarch64_pointer_size():
 # ----------------------------
 # Clang-specific sanity
 # ----------------------------
+
 
 @pytest.mark.skipif(CLANG is None, reason="clang not found in PATH")
 def test_cdef_clang_typedef_and_struct_layout():

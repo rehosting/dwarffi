@@ -44,25 +44,25 @@ def test_struct_field_write_and_to_bytes(base_types_little_endian) -> None:
 
 
 def test_base_type_instance_value_roundtrip(base_types_little_endian) -> None:
-        isf = isf_from_dict(
-            {
-                "metadata": {},
-                "base_types": base_types_little_endian,
-                "user_types": {},
-                "enums": {},
-                "symbols": {},
-            }
-        )
-    
-        int_buf = bytearray(4)
-        struct.pack_into("<i", int_buf, 0, 12345)
-        int_inst = isf.create_instance("int", int_buf)
-        
-        # FIX: Use [0] instead of _value
-        assert int_inst[0] == 12345
-        
-        # You can also test the int() cast magic method while you're here:
-        assert int(int_inst) == 12345
+    isf = isf_from_dict(
+        {
+            "metadata": {},
+            "base_types": base_types_little_endian,
+            "user_types": {},
+            "enums": {},
+            "symbols": {},
+        }
+    )
+
+    int_buf = bytearray(4)
+    struct.pack_into("<i", int_buf, 0, 12345)
+    int_inst = isf.create_instance("int", int_buf)
+
+    # FIX: Use [0] instead of _value
+    assert int_inst[0] == 12345
+
+    # You can also test the int() cast magic method while you're here:
+    assert int(int_inst) == 12345
 
 
 def test_array_write_via_boundarrayview_and_cache_invalidation(base_types_little_endian) -> None:

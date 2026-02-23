@@ -2,6 +2,7 @@ from __future__ import annotations
 from typing import Any
 import pytest
 
+
 @pytest.fixture
 def base_types_little_endian() -> dict[str, Any]:
     return {
