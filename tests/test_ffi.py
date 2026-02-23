@@ -40,6 +40,7 @@ def ffi_env(tmp_path):
 
 def test_sizeof_and_offsetof(ffi_env: DFFI):
     assert ffi_env.sizeof("int") == 4
+    assert ffi_env.sizeof("task_struct") == 16
     assert ffi_env.sizeof("struct task_struct") == 16
     assert ffi_env.offsetof("struct task_struct", "pid") == 0
     assert ffi_env.offsetof("struct task_struct", "state") == 4

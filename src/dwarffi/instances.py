@@ -95,6 +95,30 @@ class BoundArrayView:
             items_preview.append("...")
         return f"<BoundArrayView Field='{self._array_field_name}' Count={self._array_count} Items=[{', '.join(items_preview)}]>"
 
+    def __add__(self, offset: int) -> 'Ptr':
+        """Decay the array into a pointer and apply arithmetic."""
+        if not isinstance(offset, int):
+            return NotImplemented
+        base_addr = self._parent_instance._instance_offset + self._array_start_offset_in_parent
+        return Ptr(
+            base_addr + (offset * self._element_size), 
+            self._array_subtype_info, 
+            self._parent_instance._instance_vtype_accessor
+        )
+
+    def __eq__(self, other):
+        """Allows `arr == [1, 2, 3]` and comparing arrays to each other."""
+        if isinstance(other, list):
+            if len(self) != len(other): return False
+            return all(self[i] == other[i] for i in range(len(self)))
+        if isinstance(other, BoundArrayView):
+            if len(self) != len(other): return False
+            return all(self[i] == other[i] for i in range(len(self)))
+        return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
 
 class BoundTypeInstance:
     """Represents an instance of a DWARF type bound to a memory buffer."""
@@ -406,17 +430,76 @@ class BoundTypeInstance:
             return
 
         raise AttributeError(f"Cannot set attribute '{name}' on type '{self._instance_type_name}'. Use '[0]' for base/enum types.")
+    
+    # --- Numeric Magic Methods (For Base Types & Enums) ---
+    def _assert_numeric(self):
+        if isinstance(self._instance_type_def, VtypeUserType):
+            raise TypeError(f"unsupported operand type(s) for struct/union '{self._instance_type_name}'")
+
+    def __add__(self, other): 
+        self._assert_numeric()
+        return self._get_value() + other
+
+    def __radd__(self, other): 
+        self._assert_numeric()
+        return other + self._get_value()
+
+    def __sub__(self, other): 
+        self._assert_numeric()
+        return self._get_value() - other
+
+    def __rsub__(self, other): 
+        self._assert_numeric()
+        return other - self._get_value()
+
+    def __mul__(self, other): 
+        self._assert_numeric()
+        return self._get_value() * other
+
+    def __rmul__(self, other): 
+        self._assert_numeric()
+        return other * self._get_value()
+
+    # --- Rich Comparisons ---
+    def __lt__(self, other):
+        if isinstance(self._instance_type_def, VtypeUserType): return NotImplemented
+        return self._get_value() < other
+
+    def __le__(self, other):
+        if isinstance(self._instance_type_def, VtypeUserType): return NotImplemented
+        return self._get_value() <= other
+
+    def __gt__(self, other):
+        if isinstance(self._instance_type_def, VtypeUserType): return NotImplemented
+        return self._get_value() > other
+
+    def __ge__(self, other):
+        if isinstance(self._instance_type_def, VtypeUserType): return NotImplemented
+        return self._get_value() >= other
 
     def __eq__(self, other):
-        if not isinstance(other, BoundTypeInstance):
+        # 1. Compare against another BoundTypeInstance
+        if isinstance(other, BoundTypeInstance):
+            # Same memory reference
+            if self._instance_buffer is other._instance_buffer and self._instance_offset == other._instance_offset:
+                return True
+            # Same type name and same exact byte values
+            if self._instance_type_name == other._instance_type_name:
+                return self.to_bytes() == other.to_bytes()
+            # If both are primitive/enum types, try comparing their actual values
+            if not isinstance(self._instance_type_def, VtypeUserType) and not isinstance(other._instance_type_def, VtypeUserType):
+                return self._get_value() == other._get_value()
             return False
-        # If they point to the exact same memory
-        if self._instance_buffer is other._instance_buffer and self._instance_offset == other._instance_offset:
-            return True
-        # If they have the same type and bytes match
-        if self._instance_type_name == other._instance_type_name:
-            return self.to_bytes() == other.to_bytes()
+            
+        # 2. Compare against native Python types (int, float, str, etc.)
+        # If this is a base type or enum, unpack its value and compare natively.
+        if not isinstance(self._instance_type_def, VtypeUserType):
+            return self._get_value() == other
+            
         return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     def to_bytes(self) -> bytes:
         size = self._instance_type_def.size
@@ -466,14 +549,41 @@ class Ptr:
         if name:
             return name
         return "void" if kind == "base" and not name else (kind if kind else "unknown")
-    
-    def __eq__(self, other):
-        if isinstance(other, Ptr):
-            return self.address == other.address
+
+    # --- Type Conversions ---
+    def __int__(self) -> int: return self.address
+    def __index__(self) -> int: return self.address
+    def __bool__(self) -> bool: return self.address != 0
+    def __hash__(self) -> int: return hash((self.address, self.points_to_type_name))
+
+    # --- Pointer Arithmetic ---
+    def __add__(self, offset: int) -> 'Ptr':
+        if not isinstance(offset, int):
+            return NotImplemented
+        size = self._vtype_accessor.get_type_size(self._subtype_info) or 1
+        return Ptr(self.address + (offset * size), self._subtype_info, self._vtype_accessor)
+
+    def __sub__(self, other: Union[int, 'Ptr']) -> Union['Ptr', int]:
         if isinstance(other, int):
-            return self.address == other
+            size = self._vtype_accessor.get_type_size(self._subtype_info) or 1
+            return Ptr(self.address - (other * size), self._subtype_info, self._vtype_accessor)
+        elif isinstance(other, Ptr):
+            # C-style pointer subtraction yields the number of elements between them
+            size = self._vtype_accessor.get_type_size(self._subtype_info) or 1
+            return (self.address - other.address) // size
+        return NotImplemented
+
+    # --- Comparisons ---
+    def __eq__(self, other):
+        if isinstance(other, Ptr): return self.address == other.address
+        if isinstance(other, int): return self.address == other
         return False
 
+    def __ne__(self, other): return not self.__eq__(other)
+    def __lt__(self, other): return self.address < (other.address if isinstance(other, Ptr) else other)
+    def __le__(self, other): return self.address <= (other.address if isinstance(other, Ptr) else other)
+    def __gt__(self, other): return self.address > (other.address if isinstance(other, Ptr) else other)
+    def __ge__(self, other): return self.address >= (other.address if isinstance(other, Ptr) else other)
 
 class EnumInstance:
     __slots__ = '_enum_def', '_value'
