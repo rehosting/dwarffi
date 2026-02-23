@@ -47,7 +47,15 @@ class DFFI:
         if isinstance(ctype, str):
             ctype = ctype.strip()
             
-            # 2. Dynamic Array parsing (e.g. "int[10]" or "char[]")
+            # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
+            # but keep a copy for the regex parsers
+            lookup_name = ctype
+            for prefix in ["struct ", "union ", "enum "]:
+                if lookup_name.startswith(prefix):
+                    lookup_name = lookup_name[len(prefix):].strip()
+                    break
+
+            # 2. Dynamic Array parsing
             m = re.match(r"^(.*?)\[(\d*)\]$", ctype)
             if m:
                 base = m.group(1).strip()
@@ -55,26 +63,24 @@ class DFFI:
                 subtype_info = self._make_subtype_info(base)
                 return {"kind": "array", "count": count, "subtype": subtype_info}
                 
-            # Pointer parsing (e.g. "struct task_struct *")
+            # Pointer parsing
             if ctype.endswith("*"):
                 base_name = ctype[:-1].strip()
                 subtype_info = self._make_subtype_info(base_name)
                 return {"kind": "pointer", "subtype": subtype_info}
                 
-            # ADD THIS: Resolve typedef strings so they decay into their true type immediately
-            resolved_info = self._isf_group.resolve_type_info({"kind": "typedef", "name": ctype})
+            # 3. Resolve Typedefs / Raw Types
+            # Use the stripped 'lookup_name' for the ISF search
+            resolved_info = self._isf_group.resolve_type_info({"kind": "typedef", "name": lookup_name})
             
             if resolved_info.get("kind") == "typedef":
-                # It didn't resolve to an alias in the dict, so treat it as a standard type name
-                t = self._isf_group.get_type(ctype)
+                t = self._isf_group.get_type(lookup_name)
                 if not t:
                     raise KeyError(f"Unknown DWARF type: '{ctype}'")
                 return t
             elif resolved_info.get("kind") in ("pointer", "array"):
-                # Typedefs pointing to raw pointers/arrays return dicts natively
                 return resolved_info
             else:
-                # Typedef decayed to a base, struct, union, or enum name
                 t = self._isf_group.get_type(resolved_info["name"])
                 if not t:
                     raise KeyError(f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'")
