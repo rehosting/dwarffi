@@ -346,6 +346,29 @@ class BoundTypeInstance:
         elif kind in ("array", "struct", "union"):
             raise NotImplementedError(f"Direct assignment to field '{field_name_for_error}' of type '{kind}' is not supported.")
 
+    def _find_field(self, name: str):
+        """Recursively checks for anonymous fields."""
+        if not isinstance(self._instance_type_def, VtypeUserType):
+            return None, None
+            
+        def _search(type_def, target_name, current_offset):
+            if not isinstance(type_def, VtypeUserType):
+                return None, None
+            if target_name in type_def.fields:
+                f_def = type_def.fields[target_name]
+                return f_def, current_offset + f_def.offset
+                
+            for f_name, f_def in type_def.fields.items():
+                if f_def.anonymous:
+                    sub_type = self._instance_vtype_accessor.get_user_type(f_def.type_info.get("name"))
+                    if sub_type:
+                        res, off = _search(sub_type, target_name, current_offset + f_def.offset)
+                        if res:
+                            return res, off
+            return None, None
+            
+        return _search(self._instance_type_def, name, 0)
+
     def __getattr__(self, name: str) -> Any:
         if name.startswith('_instance_') or name.startswith('__'):
             return super().__getattribute__(name)
@@ -353,10 +376,12 @@ class BoundTypeInstance:
         if isinstance(self._instance_type_def, VtypeUserType):
             if name in self._instance_cache:
                 return self._instance_cache[name]
-            field_def = self._instance_type_def.fields.get(name)
+                
+            field_def, field_offset = self._find_field(name)
             if field_def is None:
-                raise AttributeError(f"'{self._instance_type_name}' (struct/union) has no attribute '{name}'")
-            val = self._read_data(field_def.type_info, field_def.offset, name)
+                raise AttributeError(f"'{self._instance_type_name}' has no attribute '{name}'")
+                
+            val = self._read_data(field_def.type_info, field_offset, name)
             if field_def.type_info.get("kind") in ["struct", "union", "array"]:
                 self._instance_cache[name] = val
             return val
@@ -369,13 +394,13 @@ class BoundTypeInstance:
             return
 
         if isinstance(self._instance_type_def, VtypeUserType):
-            field_def = self._instance_type_def.fields.get(name)
+            field_def, field_offset = self._find_field(name)
             if field_def is None:
                 super().__setattr__(name, new_value)
                 return
             if field_def.type_info.get("kind") == "array":
                 raise NotImplementedError(f"Direct assignment to array field '{name}' is not supported.")
-            self._write_data(field_def.type_info, field_def.offset, new_value, name)
+            self._write_data(field_def.type_info, field_offset, new_value, name)
             if name in self._instance_cache:
                 del self._instance_cache[name]
             return
