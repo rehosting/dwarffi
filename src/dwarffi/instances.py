@@ -614,7 +614,7 @@ class BoundTypeInstance:
                 return True
             # Same type name and same exact byte values
             if self._instance_type_name == other._instance_type_name:
-                return self.to_bytes() == other.to_bytes()
+                return self._to_bytes() == other._to_bytes()
             # If both are primitive/enum types, try comparing their actual values
             if not isinstance(self._instance_type_def, VtypeUserType) and not isinstance(
                 other._instance_type_def, VtypeUserType
@@ -632,16 +632,12 @@ class BoundTypeInstance:
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    def to_bytes(self) -> bytes:
+    def _to_bytes(self) -> bytes:
         size = self._instance_type_def.size
         if size == 0:
             return b""
         start = self._instance_offset
         return bytes(self._instance_buffer[start : start + size])
-
-    @property
-    def offset(self) -> int:
-        return self._instance_offset
 
     def __repr__(self) -> str:
         return f"<BoundTypeInstance Type='{self._instance_type_name}' Kind='{self._instance_type_def.__class__.__name__}' AtOffset={self._instance_offset}>"
