@@ -430,6 +430,13 @@ class Ptr:
         if name:
             return name
         return "void" if kind == "base" and not name else (kind if kind else "unknown")
+    
+    def __eq__(self, other):
+        if isinstance(other, Ptr):
+            return self.address == other.address
+        if isinstance(other, int):
+            return self.address == other
+        return False
 
 
 class EnumInstance:
