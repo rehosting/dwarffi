@@ -1,6 +1,9 @@
 import struct
+
 import pytest
+
 from dwarffi.dffi import DFFI
+
 
 @pytest.fixture
 def base_types_isf():

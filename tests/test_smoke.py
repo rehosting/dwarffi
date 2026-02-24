@@ -1,5 +1,7 @@
 import struct
+
 from dwarffi.dffi import DFFI
+
 
 def test_load_isf_json_filelike_and_basic_read_write() -> None:
     isf_dict = {
