@@ -452,16 +452,6 @@ class DFFI:
             return [cdata[i] for i in range(min(length, len(cdata)))]
         raise TypeError("unpack() currently requires an array view.")
 
-    def gc(
-        self, cdata: BoundTypeInstance, destructor: callable, size: int = 0
-    ) -> BoundTypeInstance:
-        """
-        Attach a finalizer to the cdata object. When garbage collected,
-        destructor(cdata) will be executed.
-        """
-        weakref.finalize(cdata, destructor, cdata)
-        return cdata
-
     def cdef(
         self,
         source: str,
