@@ -3,11 +3,11 @@ import lzma
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Union
-import struct
 from functools import lru_cache
+from typing import Any, Dict, List, Optional, Union
 
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
@@ -80,16 +80,28 @@ class DFFI:
             if res := self.vtypejsons[f].get_enum(name):
                 return res
 
-    def get_symbol(self, name: str, strict: bool = False) -> Optional[VtypeSymbol]:
+    def get_symbol(self, name: str):
         """
-        Look up a symbol by name across all loaded ISFs.
+        Searches all loaded ISF files for the given symbol name.
+        Returns the first valid VtypeSymbol found.
         """
-        for f in self._file_order:
-            if sym := self.vtypejsons[f].get_symbol(name):
+        for path in self.paths:
+            sym = self.vtypejsons[path].get_symbol(name)
+            if sym:
+                # If a symbol has no address and no type info, skip it 
+                # and see if another ISF has a more complete definition
+                if (not hasattr(sym, 'address') or sym.address in [None, 0]) and not sym.type_info:
+                    continue
                 return sym
-        
-        if strict:
-            raise KeyError(f"Symbol '{name}' not found in any loaded ISF files ({self._file_order}).")
+        return None
+    
+    def get_function_address(self, function: str) -> Optional[int]:
+        """
+        Get the address of a kernel function.
+        """
+        sym = self.ffi.get_symbol(function)
+        if sym and sym.address:
+            return sym.address
         return None
 
     def get_type(self, name: str):
