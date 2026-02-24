@@ -392,3 +392,31 @@ def test_deep_anonymous_nesting_access(adv_ffi_env):
     
     # 3. Test direct attribute access
     assert inst.target == 0x1337
+
+def test_dir_introspection_and_cache_filtering(adv_ffi_env):
+    """Verifies that dir() reports anonymous fields recursively and hides _instance_cache."""
+    # 'reg_map' contains an anonymous union (__anon_2), 
+    # which contains an anonymous struct (__anon_1), 
+    # which contains LOW and HIGH.
+    reg = adv_ffi_env.new("struct reg_map")
+    
+    available_attrs = dir(reg)
+    
+    # 1. Direct fields (the root anonymous union itself)
+    assert "__anon_2" in available_attrs
+    
+    # 2. Flattened anonymous fields (Level 1)
+    assert "ALL" in available_attrs
+    assert "__anon_1" in available_attrs
+    
+    # 3. Deeply flattened anonymous fields (Level 2)
+    assert "LOW" in available_attrs
+    assert "HIGH" in available_attrs
+    
+    # 4. Verify explicit exclusions
+    assert "_instance_cache" not in available_attrs
+    
+    # 5. Verify standard Python and dwarffi internal attributes are still present
+    assert "_instance_offset" in available_attrs
+    assert "_instance_buffer" in available_attrs
+    assert "__class__" in available_attrs
