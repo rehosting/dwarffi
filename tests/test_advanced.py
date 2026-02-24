@@ -173,3 +173,51 @@ def test_equality_operator(adv_ffi_env: DFFI):
     int_inst = adv_ffi_env.new("int", 99)
     # Even though both 'int' and 'inner_struct' are 4 bytes with value 99
     assert inst1 != int_inst
+
+def test_array_out_of_bounds_and_negative_indices(adv_ffi_env):
+    # Array of 5 integers
+    arr = adv_ffi_env.new("int[5]", [1, 2, 3, 4, 5])
+
+    # Standard bounds checks
+    with pytest.raises(IndexError, match="out of bounds"):
+        arr[5]
+    with pytest.raises(IndexError, match="out of bounds"):
+        arr[5] = 100
+
+    # Negative indices (currently not explicitly supported as Python lists do, 
+    # but they should raise IndexError rather than quietly corrupting memory)
+    with pytest.raises(IndexError, match="out of bounds"):
+        arr[-1]
+    with pytest.raises(IndexError, match="out of bounds"):
+        arr[-1] = 99
+        
+    # Valid assignments don't raise
+    arr[4] = 99
+    assert arr[4] == 99
+
+def test_nested_array_of_structs(adv_ffi_env):
+    # Create an array of 3 'outer_struct' instances
+    # (Each outer_struct is 12 bytes: 4 for inner.val, 8 for arr[2])
+    arr = adv_ffi_env.new("outer_struct[3]")
+    
+    # Test Deep Write via indexing
+    arr[0].inner.val = 100
+    arr[0].arr[1] = 999
+    
+    arr[2].inner.val = 300
+    arr[2].arr[0] = 777
+    
+    # Test deep read
+    assert arr[0].inner.val == 100
+    assert arr[0].arr[1] == 999
+    assert arr[2].inner.val == 300
+    assert arr[2].arr[0] == 777
+    
+    # Verify total array size
+    assert adv_ffi_env.sizeof(arr) == 36 # 3 elements * 12 bytes each
+    
+    # Test slice extraction of inner structs natively converts to list of BoundTypeInstances
+    slice_out = arr[0:3]
+    assert len(slice_out) == 3
+    assert slice_out[0].inner.val == 100
+    assert slice_out[2].arr[0] == 777
