@@ -179,7 +179,7 @@ class BoundTypeInstance:
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
             if base_type_def is None:
                 raise KeyError(
-                    f"Base type '{enum_def.base}' for enum '{enum_def.name}' not found."
+                    f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found."
                 )
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if compiled_struct_obj is None:
@@ -233,7 +233,7 @@ class BoundTypeInstance:
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
             if base_type_def is None:
                 raise KeyError(
-                    f"Base type '{enum_def.base}' for enum '{enum_def.name}' not found for writing."
+                    f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found for writing."
                 )
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if compiled_struct_obj is None:
