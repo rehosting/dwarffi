@@ -89,7 +89,7 @@ sensor = ffi.new("struct sensor_data", {
     "status": 0x01
 })
 
-print(f"Bytes: {sensor.to_bytes().hex()}")
+print(f"Bytes: {ffi.to_bytes(sensor).hex()}")
 print(f"Reading[1]: {sensor.readings[1]}")  # -5
 ```
 
