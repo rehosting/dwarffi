@@ -178,7 +178,7 @@ class BoundTypeInstance:
                 raise ValueError(f"Enum '{enum_def.name}' has no base type.")
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
             if base_type_def is None:
-                raise ValueError(
+                raise KeyError(
                     f"Base type '{enum_def.base}' for enum '{enum_def.name}' not found."
                 )
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -232,7 +232,7 @@ class BoundTypeInstance:
                 raise ValueError(f"Enum '{enum_def.name}' has no base type for writing.")
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
             if base_type_def is None:
-                raise ValueError(
+                raise KeyError(
                     f"Base type '{enum_def.base}' for enum '{enum_def.name}' not found for writing."
                 )
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -332,6 +332,8 @@ class BoundTypeInstance:
 
         if kind == "base":
             base_type_def = self._instance_vtype_accessor.get_base_type(name)
+            if base_type_def is None:
+                raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if base_type_def.size == 0:
                 return None
@@ -339,6 +341,8 @@ class BoundTypeInstance:
 
         elif kind == "pointer":
             ptr_base_type = self._instance_vtype_accessor.get_base_type("pointer")
+            if ptr_base_type is None:
+                raise KeyError("Base type 'pointer' not defined in loaded ISF files. Cannot read pointer field.")
             compiled_struct_obj = ptr_base_type.get_compiled_struct()
             address = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[
                 0
@@ -352,6 +356,8 @@ class BoundTypeInstance:
 
         elif kind in ("struct", "union"):
             user_type_def = self._instance_vtype_accessor.get_user_type(name)
+            if user_type_def is None:
+                raise KeyError(f"Struct/Union definition '{name}' for field '{field_name_for_error}' not found.")
             return BoundTypeInstance(
                 name,
                 user_type_def,
@@ -363,6 +369,8 @@ class BoundTypeInstance:
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
+            if base_type_def is None:
+                raise KeyError(f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             int_val = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[
                 0
@@ -404,6 +412,8 @@ class BoundTypeInstance:
 
         if kind == "base":
             base_type_def = self._instance_vtype_accessor.get_base_type(name)
+            if base_type_def is None:
+                raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if base_type_def.size == 0:
                 return
@@ -431,6 +441,8 @@ class BoundTypeInstance:
 
         elif kind == "pointer":
             ptr_base_type = self._instance_vtype_accessor.get_base_type("pointer")
+            if ptr_base_type is None:
+                raise KeyError("Base type 'pointer' not defined in loaded ISF files. Cannot write pointer field.")
             compiled_struct_obj = ptr_base_type.get_compiled_struct()
             address_to_write = (
                 value_to_write.address if isinstance(value_to_write, Ptr) else value_to_write
@@ -444,6 +456,8 @@ class BoundTypeInstance:
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
             base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
+            if base_type_def is None:
+                raise KeyError(f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if isinstance(value_to_write, EnumInstance):
                 int_val_to_write = value_to_write._value

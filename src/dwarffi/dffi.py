@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Union
 
-from dwarffi.core import (
+from dwarffi import (
     BoundArrayView,
     BoundTypeInstance,
     Ptr,
@@ -251,6 +251,8 @@ class DFFI:
             kind = t.get("kind")
             if kind == "pointer":
                 ptr_def = self.get_base_type("pointer")
+                if ptr_def is None:
+                    raise KeyError("Cannot determine pointer size: base type 'pointer' not found in loaded ISF files.")
                 size = ptr_def.size if ptr_def else None
             elif kind == "array":
                 subtype = t.get("subtype")
