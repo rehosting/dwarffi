@@ -161,3 +161,30 @@ def test_typeof_string_parsing(ffi_env):
     # but base cases should parse safely.
     t_base = ffi_env.typeof("  unsigned long  ") # strip spaces
     assert t_base.name == "unsigned long"
+
+def test_ffi_memmove_structs(ffi_env):
+    # Allocate two task_structs
+    src = ffi_env.new("struct task_struct", {"pid": 5050, "flags": 0xABCD})
+    dst = ffi_env.new("struct task_struct")
+    
+    assert dst.pid == 0
+    assert dst.flags == 0
+    
+    # Memmove exact size
+    ffi_env.memmove(dst, src, ffi_env.sizeof("struct task_struct"))
+    
+    # Verify exact byte copy
+    assert dst.pid == 5050
+    assert dst.flags == 0xABCD
+    assert bytes(src) == bytes(dst)
+    
+def test_ffi_memmove_raw_bytes(ffi_env):
+    dst = ffi_env.new("struct task_struct")
+    raw_data = b"\x01\x00\x00\x00\x02\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00"
+    
+    # Memmove raw bytes into struct buffer
+    ffi_env.memmove(dst, raw_data, 12)
+    
+    assert dst.pid == 1
+    assert dst.state.name == "TASK_DEAD" # State 2
+    assert dst.flags == 3
