@@ -182,26 +182,35 @@ class DFFI:
             f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}"
         )
 
-    def sizeof(self, ctype: Union[str, BoundTypeInstance, Any]) -> int:
-        t = self.typeof(ctype) if isinstance(ctype, str) else ctype
+    def sizeof(self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView, Any]) -> int:
+        """
+        Returns the size in bytes of the given type or instance.
+        """
+        if isinstance(ctype, (str, Ptr, BoundArrayView)):
+            t = self.typeof(ctype)
+        else:
+            t = ctype
 
+        size = None
         if isinstance(t, BoundTypeInstance):
             size = t._instance_type_def.size
         elif isinstance(t, dict):
-            if t.get("kind") == "pointer":
-                size = self.get_base_type("pointer").size
-            elif t.get("kind") == "array":
-                subtype_name = t.get("subtype", {}).get("name")
-                if not subtype_name:
-                    raise ValueError(f"Array subtype missing name in {t}")
-                elem_size = self.sizeof(subtype_name)
+            kind = t.get("kind")
+            if kind == "pointer":
+                ptr_def = self.get_base_type("pointer")
+                size = ptr_def.size if ptr_def else None
+            elif kind == "array":
+                subtype = t.get("subtype")
+                if not subtype:
+                    raise ValueError(f"Array type missing subtype information: {t}")
+                elem_size = self.sizeof(subtype)
                 size = elem_size * t.get("count", 0)
             else:
                 size = self.get_type_size(t)
         elif hasattr(t, "size"):
             size = t.size
         else:
-            raise TypeError(f"Cannot determine size of {ctype}")
+            raise TypeError(f"Cannot determine size of {type(ctype).__name__}: {ctype}")
 
         if size is None:
             raise ValueError(f"Type '{ctype}' has an unknown or undefined size.")
