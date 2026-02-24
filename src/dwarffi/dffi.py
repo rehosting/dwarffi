@@ -129,7 +129,7 @@ class DFFI:
             type_def = self.get_type(type_input)
         else:
             type_def = type_input
-            type_name = type_def.name
+            type_name = getattr(type_def, "name", "unknown")
 
         if type_def is None:
             raise ValueError(f"Type definition for '{type_name}' not found in any loaded ISF.")
@@ -421,7 +421,7 @@ class DFFI:
 
         return instance
 
-    def cast(self, ctype: str, value: Any) -> Union[BoundTypeInstance, Ptr]:
+    def cast(self, ctype: str, value: Any) -> Union[BoundTypeInstance, Ptr, BoundArrayView]:
         """
         Interpret 'value' as the specified C type.
         """
@@ -440,25 +440,62 @@ class DFFI:
             instance[0] = value
             return instance
 
-        # Re-casting an existing buffer to a new type
+        # Re-casting an existing memory buffer to a new type seamlessly
         if isinstance(value, BoundTypeInstance):
-            return self._create_instance(t, value._instance_buffer, value._instance_offset)
+            return self.from_buffer(ctype, value._instance_buffer, offset=value._instance_offset)
+        elif isinstance(value, BoundArrayView):
+            return self.from_buffer(
+                ctype, 
+                value._parent_instance._instance_buffer, 
+                offset=value._parent_instance._instance_offset + value._array_start_offset_in_parent
+            )
 
         raise TypeError(f"Cannot cast {type(value)} to {ctype}")
 
     def from_buffer(
         self,
         ctype: str,
-        python_buffer: Any,
+        python_buffer: Union[bytearray, memoryview, bytes],
         offset: int = 0,
         require_writable: bool = False,
-    ) -> BoundTypeInstance:
+    ) -> Union[BoundTypeInstance, BoundArrayView]:
         if require_writable and isinstance(python_buffer, bytes):
             raise TypeError("Buffer is read-only")
 
         t = self.typeof(ctype)
         if isinstance(python_buffer, bytes):
             python_buffer = bytearray(python_buffer)
+
+        # Handle pointers and dynamic arrays natively by wrapping them in an array view
+        if isinstance(t, dict) and t.get("kind") in ("array", "pointer"):
+            if t.get("kind") == "pointer":
+                # Treat a bound pointer like an unbounded array of that pointer type
+                t = {"kind": "array", "count": 0, "subtype": t}
+
+            elem_size = self.sizeof(t.get("subtype"))
+            if elem_size == 0:
+                elem_size = 1
+
+            count = t.get("count", 0)
+            if count == 0:
+                count = (len(python_buffer) - offset) // elem_size
+                t["count"] = count
+
+            dummy_size = count * elem_size
+            
+            # Use hash(str(t)) to prevent cache collisions if the same buffer is cast to multiple types
+            dummy_name = f"__dummy_{id(python_buffer)}_{offset}_{hash(str(t))}"
+            primary_isf_path = self._file_order[0]
+            
+            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
+                "kind": "struct",
+                "size": dummy_size,
+                "fields": {"arr": {"offset": 0, "type": t}},
+            }
+            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+
+            instance = self._create_instance(dummy_name, python_buffer, instance_offset_in_buffer=offset)
+            return instance.arr
 
         return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset)
 
