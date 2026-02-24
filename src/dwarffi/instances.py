@@ -70,6 +70,17 @@ class BoundArrayView:
             )
         return self._array_start_offset_in_parent + (index * self._element_size)
 
+    def __bytes__(self) -> bytes:
+        """Allows direct casting of the array view to bytes."""
+        buf = self._parent_instance._instance_buffer
+        start = self._parent_instance._instance_offset + self._array_start_offset_in_parent
+        
+        # Calculate total byte size of the array
+        elem_size = self._parent_instance._instance_vtype_accessor.sizeof(self._array_type_def)
+        size = self._array_count * elem_size
+        
+        return bytes(buf[start : start + size])
+
     def __getitem__(self, index: Union[int, slice]) -> Any:
         if isinstance(index, slice):
             start, stop, step = index.indices(self._array_count)
