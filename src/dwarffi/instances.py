@@ -676,11 +676,27 @@ class BoundTypeInstance:
         return f"<BoundTypeInstance Type='{self._instance_type_name}' Kind='{self._instance_type_def.__class__.__name__}' AtOffset={self._instance_offset}>"
 
     def __dir__(self):
-        attrs = list(super().__dir__())
+        """Allows tab-completion to see recursive anonymous fields."""
+        items = list(super().__dir__())
         if isinstance(self._instance_type_def, VtypeUserType):
-            attrs.extend(self._instance_type_def.fields.keys())
-        return sorted(list(set(a for a in attrs if a != "_instance_cache")))
+            # Add direct fields
+            items.extend(self._instance_type_def.fields.keys())
+            
+            # Recursively add fields from anonymous members
+            def _get_anon_fields(t_def):
+                extra = []
+                for f in t_def.fields.values():
+                    if f.anonymous:
+                        sub_t = self._instance_vtype_accessor.get_type(f.type_info.get("name"))
+                        if isinstance(sub_t, VtypeUserType):
+                            extra.extend(sub_t.fields.keys())
+                            extra.extend(_get_anon_fields(sub_t))
+                return extra
 
+            items.extend(_get_anon_fields(self._instance_type_def))
+        
+        # Filter duplicates and hide the internal cache from tab-completion
+        return sorted(list(set(a for a in items if a != "_instance_cache")))
 
 class Ptr:
     __slots__ = "address", "_subtype_info", "_vtype_accessor"
