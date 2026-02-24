@@ -139,11 +139,11 @@ class BoundTypeInstance:
         self,
         type_name: str,
         type_def: Union[VtypeUserType, VtypeBaseType, VtypeEnum],
-        buffer: bytearray,
+        buffer: Union[bytearray, memoryview],
         vtype_accessor: "VtypeJson",
         instance_offset_in_buffer: int = 0,
     ):
-        if not isinstance(buffer, bytearray):
+        if not isinstance(buffer, (bytearray, memoryview)):
             raise TypeError("Internal Error: BoundTypeInstance expects a bytearray.")
         self._instance_type_name = type_name
         self._instance_type_def = type_def
