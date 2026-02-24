@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Union
+from functools import lru_cache
 
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
@@ -16,6 +17,7 @@ class DFFI:
     def __init__(self, isf_input: Optional[Union[str, dict, list]] = None):
         self._file_order = []
         self.vtypejsons = {}
+        self._parse_ctype_string = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
 
         if isf_input is not None:
             if isinstance(isf_input, list):
@@ -172,6 +174,48 @@ class DFFI:
         elif isinstance(base_t, VtypeEnum):
             return {"kind": "enum", "name": base_t.name}
         return {"name": base_name}
+    
+    def _parse_ctype_string_impl(self, ctype: str) -> str:
+        # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
+        # but keep a copy for the regex parsers
+        lookup_name = ctype
+        for prefix in ["struct ", "union ", "enum "]:
+            if lookup_name.startswith(prefix):
+                lookup_name = lookup_name[len(prefix) :].strip()
+                break
+
+        # 2. Dynamic Array parsing
+        m = re.match(r"^(.*?)\[(\d*)\]$", ctype)
+        if m:
+            base = m.group(1).strip()
+            count = int(m.group(2)) if m.group(2) else 0
+            subtype_info = self._make_subtype_info(base)
+            return {"kind": "array", "count": count, "subtype": subtype_info}
+
+        # Pointer parsing
+        if ctype.endswith("*"):
+            base_name = ctype[:-1].strip()
+            subtype_info = self._make_subtype_info(base_name)
+            return {"kind": "pointer", "subtype": subtype_info}
+
+        # 3. Resolve Typedefs / Raw Types
+        # Use the stripped 'lookup_name' for the ISF search
+        resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
+
+        if resolved_info.get("kind") == "typedef":
+            t = self.get_type(lookup_name)
+            if not t:
+                raise KeyError(f"Unknown DWARF type: '{ctype}'")
+            return t
+        elif resolved_info.get("kind") in ("pointer", "array"):
+            return resolved_info
+        else:
+            t = self.get_type(resolved_info["name"])
+            if not t:
+                raise KeyError(
+                    f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'"
+                )
+            return t
 
     def typeof(
         self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView]
@@ -188,49 +232,7 @@ class DFFI:
             }
 
         if isinstance(ctype, str):
-            ctype = ctype.strip()
-
-            # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
-            # but keep a copy for the regex parsers
-            lookup_name = ctype
-            for prefix in ["struct ", "union ", "enum "]:
-                if lookup_name.startswith(prefix):
-                    lookup_name = lookup_name[len(prefix) :].strip()
-                    break
-
-            # 2. Dynamic Array parsing
-            m = re.match(r"^(.*?)\[(\d*)\]$", ctype)
-            if m:
-                base = m.group(1).strip()
-                count = int(m.group(2)) if m.group(2) else 0
-                subtype_info = self._make_subtype_info(base)
-                return {"kind": "array", "count": count, "subtype": subtype_info}
-
-            # Pointer parsing
-            if ctype.endswith("*"):
-                base_name = ctype[:-1].strip()
-                subtype_info = self._make_subtype_info(base_name)
-                return {"kind": "pointer", "subtype": subtype_info}
-
-            # 3. Resolve Typedefs / Raw Types
-            # Use the stripped 'lookup_name' for the ISF search
-            resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
-
-            if resolved_info.get("kind") == "typedef":
-                t = self.get_type(lookup_name)
-                if not t:
-                    raise KeyError(f"Unknown DWARF type: '{ctype}'")
-                return t
-            elif resolved_info.get("kind") in ("pointer", "array"):
-                return resolved_info
-            else:
-                t = self.get_type(resolved_info["name"])
-                if not t:
-                    raise KeyError(
-                        f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'"
-                    )
-                return t
-
+            return self._parse_ctype_string(ctype.strip())
         raise TypeError(
             f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}"
         )
