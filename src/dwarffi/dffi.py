@@ -499,11 +499,16 @@ class DFFI:
         if isinstance(cdata, Ptr):
             # A pointer doesn't own memory, it just points. 
             # In a real rehosting environment, this would call out to QEMU's memory read API.
-            raise TypeError("Cannot get a direct buffer from a Ptr. Dereference it first if bound to local memory.")
+            raise TypeError("Cannot get a direct buffer from a Ptr. Dereference it first.")
             
-        buf = cdata._instance_buffer if hasattr(cdata, "_instance_buffer") else cdata._parent_instance._instance_buffer
-        offset = cdata._instance_offset if hasattr(cdata, "_instance_offset") else cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
-        
+        # Safely extract the buffer and offset based on the view type
+        if isinstance(cdata, BoundArrayView):
+            buf = cdata._parent_instance._instance_buffer
+            offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
+        else:
+            buf = cdata._instance_buffer
+            offset = cdata._instance_offset
+            
         if size == -1:
             size = self.sizeof(cdata)
             
@@ -536,25 +541,52 @@ class DFFI:
         """
         Reads a null-terminated string from memory, or exactly maxlen bytes.
         """
-        # Get the fast memoryview
-        mem = self.buffer(cdata, maxlen if maxlen > 0 else len(cdata._instance_buffer) - cdata._instance_offset)
-        
-        # If maxlen is specified, just return the raw bytes
-        if maxlen > 0:
-            return mem.tobytes()
-            
-        # Otherwise, search for the null terminator rapidly in C
-        byte_data = mem.tobytes()
-        null_idx = byte_data.find(b'\x00')
-        
-        if null_idx == -1:
-            return byte_data # No null terminator found, return everything we have
-        return byte_data[:null_idx]
-
-    def unpack(self, cdata: Union[BoundArrayView, BoundTypeInstance], length: int) -> list:
+        if isinstance(cdata, Ptr):
+            raise TypeError("Cannot read string directly from a Ptr.")
+        # Get the fast memoryview 
         if isinstance(cdata, BoundArrayView):
-            return [cdata[i] for i in range(min(length, len(cdata)))]
-        raise TypeError("unpack() currently requires an array view.")
+            buf = cdata._parent_instance._instance_buffer
+            offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
+        else:
+            buf = cdata._instance_buffer
+            offset = cdata._instance_offset
+
+        max_avail = len(buf) - offset
+        read_len = maxlen if maxlen > 0 else max_avail
+        
+        # Zero-copy slice into Python bytes
+        byte_data = memoryview(buf)[offset : offset + read_len].tobytes()
+        
+        if maxlen > 0:
+            return byte_data
+            
+        # Rapid C-level search for the null terminator
+        null_idx = byte_data.find(b'\x00')
+        return byte_data if null_idx == -1 else byte_data[:null_idx]
+
+    def unpack(self, cdata: Union[BoundArrayView, BoundTypeInstance], count: int = -1) -> Union[list, tuple]:
+        """
+        Unpacks an array into a Python list, or a fully primitive struct into a tuple.
+        """
+        # 1. Array Unpacking (Existing Logic)
+        if isinstance(cdata, BoundArrayView):
+            if count == -1:
+                count = cdata._array_count
+            else:
+                count = min(count, cdata._array_count)
+            return [cdata[i] for i in range(count)]
+            
+        # 2. Bulk Struct Unpacking (New Fast Path)
+        if isinstance(cdata, BoundTypeInstance) and isinstance(cdata._instance_type_def, VtypeUserType):
+            agg_struct = cdata._instance_type_def.get_aggregated_struct(self)
+            if not agg_struct:
+                raise TypeError(
+                    f"Struct '{cdata._instance_type_name}' contains complex types, unions, "
+                    "or overlapping fields and cannot be bulk-unpacked."
+                )
+            return agg_struct.unpack_from(cdata._instance_buffer, cdata._instance_offset)
+
+        raise TypeError("unpack() requires an array view or a struct consisting of primitive base types.")
 
     def cdef(
         self,
