@@ -15,8 +15,8 @@ from dwarffi.core import (
     VtypeBaseType,
     VtypeEnum,
     VtypeUserType,
-    load_isf_json,
     isf_from_dict,
+    load_isf_json,
 )
 
 
