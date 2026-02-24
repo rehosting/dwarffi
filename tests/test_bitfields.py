@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def test_bitfield_read_write(base_types_little_endian):
     # Simulate:
     # struct flags {

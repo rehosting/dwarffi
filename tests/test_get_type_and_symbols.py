@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dwarffi.core import VtypeJson, isf_from_dict
+from dwarffi.core import VtypeJson
 
 
 def test_get_type_prefixes(base_types_little_endian) -> None:
-    isf = isf_from_dict(
+    isf = VtypeJson(
         {
             "metadata": {},
             "base_types": base_types_little_endian,
@@ -27,7 +27,7 @@ def test_get_symbols_by_address_and_shift(base_types_little_endian) -> None:
     target = 0x1000
     delta = 0x10
 
-    isf = isf_from_dict(
+    isf = VtypeJson(
         {
             "metadata": {},
             "base_types": base_types_little_endian,
@@ -58,7 +58,7 @@ def test_get_symbols_by_address_and_shift(base_types_little_endian) -> None:
 
 
 def test_vtypejson_repr_smoke(base_types_little_endian) -> None:
-    isf = isf_from_dict(
+    isf = VtypeJson(
         {
             "metadata": {},
             "base_types": base_types_little_endian,

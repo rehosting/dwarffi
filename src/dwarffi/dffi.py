@@ -13,9 +13,8 @@ from dwarffi.core import (
     Ptr,
     VtypeBaseType,
     VtypeEnum,
+    VtypeJson,
     VtypeUserType,
-    isf_from_dict,
-    load_isf_json,
 )
 
 
@@ -40,11 +39,11 @@ class DFFI:
             pseudo_path = f"<dict_{id(isf_input)}>"
             if pseudo_path not in self.vtypejsons:
                 self._file_order.append(pseudo_path)
-                self.vtypejsons[pseudo_path] = isf_from_dict(isf_input)
+                self.vtypejsons[pseudo_path] = VtypeJson(isf_input)
         elif isinstance(isf_input, str):
             if isf_input not in self.vtypejsons:
                 self._file_order.append(isf_input)
-                self.vtypejsons[isf_input] = load_isf_json(isf_input)
+                self.vtypejsons[isf_input] = VtypeJson(isf_input)
         else:
             raise TypeError("load_isf expects a file path (str) or a dictionary (dict)")
     
@@ -636,7 +635,7 @@ class DFFI:
                     raise ValueError("save_isf_to must end with '.json' or '.json.xz'")
 
             # 5) Load into this DFFI instance
-            vtype_obj = isf_from_dict(isf_dict)
+            vtype_obj = VtypeJson(isf_dict)
 
             pseudo_path = f"<cdef_{id(source)}>"
             self._file_order.append(pseudo_path)

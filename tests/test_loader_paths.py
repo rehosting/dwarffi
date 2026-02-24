@@ -3,10 +3,10 @@ from __future__ import annotations
 import io
 import json
 import lzma
+
 import pytest
 
-from dwarffi import VtypeJson, load_isf_json
-from dwarffi import DFFI
+from dwarffi import DFFI, VtypeJson
 
 
 def test_load_isf_json_supports_path_and_xz(tmp_path) -> None:
@@ -20,13 +20,13 @@ def test_load_isf_json_supports_path_and_xz(tmp_path) -> None:
 
     json_path = tmp_path / "sample.isf.json"
     json_path.write_text(json.dumps(isf_dict), encoding="utf-8")
-    isf = load_isf_json(str(json_path))
+    isf = VtypeJson(str(json_path))
     assert isinstance(isf, VtypeJson)
 
     xz_path = tmp_path / "sample.isf.json.xz"
     with lzma.open(xz_path, "wt", encoding="utf-8") as f:
         json.dump(isf_dict, f)
-    isf_xz = load_isf_json(str(xz_path))
+    isf_xz = VtypeJson(str(xz_path))
     assert isinstance(isf_xz, VtypeJson)
 
 
@@ -39,7 +39,7 @@ def test_load_isf_json_supports_file_like() -> None:
         "symbols": {},
     }
     f = io.StringIO(json.dumps(isf_dict))
-    isf = load_isf_json(f)
+    isf = VtypeJson(f)
     assert isinstance(isf, VtypeJson)
 
 def test_dffi_init_supports_list_but_load_isf_is_singular(tmp_path):
