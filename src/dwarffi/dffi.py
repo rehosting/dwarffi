@@ -412,18 +412,18 @@ class DFFI:
     def from_buffer(
         self,
         ctype: str,
-        python_buffer: Union[bytearray, memoryview, bytes],
+        python_buffer: Any,
+        offset: int = 0,
         require_writable: bool = False,
     ) -> BoundTypeInstance:
         if require_writable and isinstance(python_buffer, bytes):
             raise TypeError("Buffer is read-only")
 
         t = self.typeof(ctype)
-        # Convert bytes to bytearray to satisfy BoundTypeInstance requirement if read-only is tolerated
         if isinstance(python_buffer, bytes):
             python_buffer = bytearray(python_buffer)
 
-        return self._create_instance(t, python_buffer)
+        return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset)
 
     def buffer(self, cdata: BoundTypeInstance, size: Optional[int] = None) -> memoryview:
         """Returns a memoryview over the underlying bytearray of the cdata."""
