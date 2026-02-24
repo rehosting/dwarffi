@@ -1,0 +1,92 @@
+{
+  "metadata": {
+    "format": "6.0.0",
+    "producer": {
+      "datetime": "2019-01-16T11:41:52.590000",
+      "name": "dia2json",
+      "version": "0.2.0"
+    },
+    "windows": {
+      "pdb": {
+        "GUID": "37144E973CF046B9920BE37E36A8B458",
+        "age": 2,
+        "database": "ntkrnlmp.pdb",
+        "machine_type": 332
+      }
+    }
+  },
+  "base_types": {
+    "unsigned short": {
+      "endian": "little",
+      "kind": "int",
+      "signed": false,
+      "size": 2
+    },
+    "pointer": {
+      "endian": "little",
+      "kind": "int",
+      "signed": false,
+      "size": 4
+    }
+  },
+  "user_types": {
+    "_LIST_ENTRY": {
+      "fields": {
+        "Blink": {
+          "offset": 4,
+          "type": {
+            "kind": "pointer",
+            "subtype": {
+              "kind": "struct",
+              "name": "_LIST_ENTRY"
+            }
+          }
+        },
+        "Flink": {
+          "offset": 0,
+          "type": {
+            "kind": "pointer",
+            "subtype": {
+              "kind": "struct",
+              "name": "_LIST_ENTRY"
+            }
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 8
+    },
+    "_UNICODE_STRING": {
+      "fields": {
+        "Buffer": {
+          "offset": 4,
+          "type": {
+            "kind": "pointer",
+            "subtype": {
+              "kind": "base",
+              "name": "unsigned short"
+            }
+          }
+        },
+        "Length": {
+          "offset": 0,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        },
+        "MaximumLength": {
+          "offset": 2,
+          "type": {
+            "kind": "base",
+            "name": "unsigned short"
+          }
+        }
+      },
+      "kind": "struct",
+      "size": 8
+    }
+  },
+  "enums": {},
+  "symbols": {}
+}
