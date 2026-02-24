@@ -1,5 +1,5 @@
-import pytest
 from dwarffi.dffi import DFFI
+
 
 def test_bulk_unpack_correctness():
     """Verifies that bulk unpack returns the exact same data as field-by-field access."""

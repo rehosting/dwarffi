@@ -1,5 +1,7 @@
 import timeit
+
 from dwarffi import DFFI
+
 
 def run_profiler():
     print("[*] Setting up performance benchmark...")
