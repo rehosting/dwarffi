@@ -14,8 +14,8 @@ from dwarffi import (
     VtypeBaseType,
     VtypeEnum,
     VtypeJson,
-    VtypeUserType,
     VtypeSymbol,
+    VtypeUserType,
 )
 
 
