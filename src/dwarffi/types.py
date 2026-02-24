@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 class SourceMetadata:
-    """Represents source file metadata within the ISF."""
+    """Represents source file metadata within the ISF, tracking provenance."""
 
     __slots__ = "kind", "name", "hash_type", "hash_value"
 
@@ -19,7 +19,7 @@ class SourceMetadata:
 
 
 class UnixMetadata:
-    """Represents Unix-specific (Linux/Mac) metadata within the ISF."""
+    """Represents Unix-specific (Linux/Mac) metadata grouping symbols and types."""
 
     __slots__ = "symbols", "types"
 
@@ -36,7 +36,7 @@ class UnixMetadata:
 
 
 class VtypeMetadata:
-    """Represents the top-level metadata in the ISF."""
+    """Represents the top-level provenance and format metadata in the ISF."""
 
     __slots__ = "linux", "mac", "producer", "format_version"
 
@@ -55,57 +55,48 @@ class VtypeMetadata:
 
 
 class VtypeBaseType:
-    """Represents a base type definition in the ISF (e.g., int, char)."""
+    """
+    Represents a primitive base type definition (e.g., int, char, float).
+    
+    Caches a `struct.Struct` object for high-performance memory packing/unpacking.
+    """
 
     __slots__ = "name", "size", "signed", "kind", "endian", "_compiled_struct"
 
     def __init__(self, name: str, data: Dict[str, Any]):
         self.name: str = name
-        self.size: Optional[int] = data.get("size")
-        self.signed: Optional[bool] = data.get("signed")
-        self.kind: Optional[str] = data.get("kind")
-        self.endian: Optional[str] = data.get("endian")
+        self.size: int = data.get("size", 0)
+        self.signed: bool = data.get("signed", False)
+        self.kind: str = data.get("kind", "int")
+        self.endian: str = data.get("endian", "little")
         self._compiled_struct: Optional[struct.Struct] = None
 
     def get_compiled_struct(self) -> Optional[struct.Struct]:
-        if hasattr(self, "_compiled_struct") and self._compiled_struct is not None:
-            if self.size == 0 and self._compiled_struct is None:
-                return None
-            if self.size != 0:
-                return self._compiled_struct
-        elif self.size == 0:
-            self._compiled_struct = None
-            return None
+        """
+        Lazily compiles and returns the `struct.Struct` object for this type.
+        
+        Returns None for types that cannot be packed (like 'void').
+        """
+        if self._compiled_struct is not None:
+            return self._compiled_struct
 
-        if self.size is None or self.kind is None or self.endian is None:
-            return None
-        if self.size == 0 and self.kind == "void":
-            self._compiled_struct = None
+        if self.size == 0:
             return None
 
         endian_char = "<" if self.endian == "little" else ">"
         fmt_char: Optional[str] = None
 
-        if self.kind == "int" or self.kind == "pointer":
-            if self.size == 1:
-                fmt_char = "b" if self.signed else "B"
-            elif self.size == 2:
-                fmt_char = "h" if self.signed else "H"
-            elif self.size == 4:
-                fmt_char = "i" if self.signed else "I"
-            elif self.size == 8:
-                fmt_char = "q" if self.signed else "Q"
+        if self.kind in ("int", "pointer"):
+            mapping = {1: "b", 2: "h", 4: "i", 8: "q"}
+            fmt_char = mapping.get(self.size)
+            if fmt_char and not self.signed:
+                fmt_char = fmt_char.upper()
         elif self.kind == "char":
-            if self.size == 1:
-                fmt_char = "b" if self.signed else "B"
+            fmt_char = "b" if self.signed else "B"
         elif self.kind == "bool":
-            if self.size == 1:
-                fmt_char = "?"
+            fmt_char = "?"
         elif self.kind == "float":
-            if self.size == 4:
-                fmt_char = "f"
-            elif self.size == 8:
-                fmt_char = "d"
+            fmt_char = "f" if self.size == 4 else "d"
 
         if fmt_char:
             try:
@@ -121,15 +112,15 @@ class VtypeBaseType:
 
 
 class VtypeStructField:
-    """Represents a field within a user-defined struct or union."""
+    """Represents a single field within a user-defined struct or union."""
 
     __slots__ = "name", "type_info", "offset", "anonymous"
 
     def __init__(self, name: str, data: Dict[str, Any]):
         self.name: str = name
         self.type_info: Dict[str, Any] = data.get("type", {})
-        self.offset: Optional[int] = data.get("offset")
-        self.anonymous: Optional[bool] = data.get("anonymous", False)
+        self.offset: int = data.get("offset", 0)
+        self.anonymous: bool = data.get("anonymous", False)
 
     def __repr__(self) -> str:
         type_kind = self.type_info.get("kind", "unknown")
@@ -139,28 +130,40 @@ class VtypeStructField:
 
 
 class VtypeUserType:
-    """Represents a user-defined type (struct or union) in the ISF."""
+    """
+    Represents a complex user-defined type (struct or union).
+    
+    Supports O(1) flattened field lookups and optimized block-unpacking 
+    for primitive-only structures.
+    """
 
     __slots__ = "name", "size", "fields", "kind", "_flattened_fields", "_aggregated_struct"
 
     def __init__(self, name: str, data: Dict[str, Any]):
         self.name: str = name
-        self.size: Optional[int] = data.get("size")
+        self.size: int = data.get("size", 0)
         self.fields: Dict[str, VtypeStructField] = {
             f_name: VtypeStructField(f_name, f_data)
             for f_name, f_data in data.get("fields", {}).items()
             if f_data
         }
-        self.kind: Optional[str] = data.get("kind")  # "struct" or "union"
-    
-    def get_flattened_fields(self, vtype_accessor) -> Dict[str, Tuple[Any, int]]:
-        """O(1) lookup table for all fields, flattening anonymous unions/structs."""
-        if hasattr(self, "_flattened_fields"):
+        self.kind: str = data.get("kind", "struct")
+        self._flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int]]] = None
+        self._aggregated_struct: Optional[struct.Struct] = None
+
+    def get_flattened_fields(self, vtype_accessor: Any) -> Dict[str, Tuple[VtypeStructField, int]]:
+        """
+        Builds and caches an O(1) lookup table for all fields.
+        
+        This recursively flattens anonymous unions and structs so their fields
+        can be accessed as if they were members of the parent.
+        """
+        if self._flattened_fields is not None:
             return self._flattened_fields
 
-        flattened = {}
+        flattened: Dict[str, Tuple[VtypeStructField, int]] = {}
 
-        def _flatten(t_def, current_offset):
+        def _flatten(t_def: VtypeUserType, current_offset: int):
             for name, field in t_def.fields.items():
                 if not field.anonymous:
                     flattened[name] = (field, current_offset + field.offset)
@@ -175,9 +178,16 @@ class VtypeUserType:
         self._flattened_fields = flattened
         return self._flattened_fields
 
-    def get_aggregated_struct(self, vtype_accessor) -> Optional[struct.Struct]:
-        """Compiles flat, primitive-only structs into a single fast C-struct."""
-        if hasattr(self, "_aggregated_struct"):
+    def get_aggregated_struct(self, vtype_accessor: Any) -> Optional[struct.Struct]:
+        """
+        Attempts to compile a single `struct.Struct` for the entire object.
+        
+        This succeeds only if the struct is composed entirely of primitive base types 
+        with no overlapping fields (unions) or complex subtypes (arrays/pointers).
+        
+        Returns a `struct.Struct` for bulk memory unpacking, or None if aggregation is impossible.
+        """
+        if self._aggregated_struct is not None:
             return self._aggregated_struct
             
         fields_flat = self.get_flattened_fields(vtype_accessor)
@@ -189,33 +199,27 @@ class VtypeUserType:
         current_offset = 0
         
         for field_def, abs_offset in sorted_fields:
+            # Overlapping memory (unions) cannot be aggregated into a sequential Struct
             if abs_offset < current_offset:
-                # We hit an overlap (like a union). struct.Struct cannot easily pack 
-                # overlapping memory sequentially. Fall back to individual field access.
-                self._aggregated_struct = None
                 return None
 
             t_info = vtype_accessor._resolve_type_info(field_def.type_info)
             if t_info.get("kind") != "base":
-                self._aggregated_struct = None
                 return None 
                 
             base_type = vtype_accessor.get_base_type(t_info.get("name"))
             if not base_type:
-                self._aggregated_struct = None
                 return None
 
-            # Handle C-compiler Padding gaps
+            # Handle compiler padding gaps with 'x'
             if abs_offset > current_offset:
                 fmt_string += f"{abs_offset - current_offset}x"
                 current_offset = abs_offset
                 
             base_struct = base_type.get_compiled_struct()
             if not base_struct:
-                self._aggregated_struct = None
                 return None
                 
-            # Extract just the format character (e.g., 'i' from '<i')
             fmt_string += base_struct.format[-1]
             current_offset += base_type.size
 
@@ -225,47 +229,25 @@ class VtypeUserType:
             self._aggregated_struct = None
             
         return self._aggregated_struct
-    
-    def _compile_flattened_fields(self, vtype_accessor):
-        """Builds an O(1) lookup table for all fields, including anonymous ones."""
-        if hasattr(self, "_flattened_fields"):
-            return self._flattened_fields
-
-        flattened = {}
-        
-        def _flatten(t_def, current_offset):
-            for name, field in t_def.fields.items():
-                if not field.anonymous:
-                    # Store the absolute offset and the field definition
-                    flattened[name] = (field, current_offset + field.offset)
-                else:
-                    # Resolve anonymous type and recurse
-                    sub_t_info = vtype_accessor._resolve_type_info(field.type_info)
-                    sub_t = vtype_accessor.get_type(sub_t_info.get("name"))
-                    if isinstance(sub_t, VtypeUserType):
-                        _flatten(sub_t, current_offset + field.offset)
-
-        _flatten(self, 0)
-        self._flattened_fields = flattened
-        return self._flattened_fields
 
     def __repr__(self) -> str:
         return f"<VtypeUserType Name='{self.name}' Kind='{self.kind}' Size={self.size} Fields={len(self.fields)}>"
 
 
 class VtypeEnum:
-    """Represents an enumeration type in the ISF."""
+    """Represents a C enumeration and its constant mappings."""
 
     __slots__ = "name", "size", "base", "constants", "_val_to_name"
 
     def __init__(self, name: str, data: Dict[str, Any]):
         self.name: str = name
-        self.size: Optional[int] = data.get("size")
+        self.size: int = data.get("size", 0)
         self.base: Optional[str] = data.get("base")
         self.constants: Dict[str, int] = data.get("constants", {})
         self._val_to_name: Optional[Dict[int, str]] = None
 
     def get_name_for_value(self, value: int) -> Optional[str]:
+        """Performs a reverse lookup to find a constant name for an integer value."""
         if self._val_to_name is None:
             self._val_to_name = {v: k for k, v in self.constants.items()}
         return self._val_to_name.get(value)
@@ -275,7 +257,7 @@ class VtypeEnum:
 
 
 class VtypeSymbol:
-    """Represents a symbol (variable or function) in the ISF."""
+    """Represents a global symbol (function or variable) and its memory location."""
 
     __slots__ = "name", "type_info", "address", "constant_data"
 
@@ -286,6 +268,7 @@ class VtypeSymbol:
         self.constant_data: Optional[str] = data.get("constant_data")
 
     def get_decoded_constant_data(self) -> Optional[bytes]:
+        """Decodes base64-encoded constant data associated with the symbol."""
         if self.constant_data:
             try:
                 return base64.b64decode(self.constant_data)
