@@ -7,16 +7,9 @@ import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Union
 
-from dwarffi import (
-    BoundArrayView,
-    BoundTypeInstance,
-    Ptr,
-    VtypeBaseType,
-    VtypeEnum,
-    VtypeJson,
-    VtypeSymbol,
-    VtypeUserType,
-)
+from .instances import BoundArrayView, BoundTypeInstance, Ptr
+from .parser import VtypeJson
+from .types import VtypeBaseType, VtypeEnum, VtypeSymbol, VtypeUserType
 
 
 class DFFI:
