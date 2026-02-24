@@ -1,7 +1,6 @@
 import struct
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Iterator, Optional, Union
 
-from .parser import VtypeJson
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
 
@@ -9,6 +8,14 @@ def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
     """
     Truncates and wraps an arbitrary Python integer into the boundaries of a
     C-style integer of `size_bytes` bytes, applying sign extension if needed.
+
+    Args:
+        value: The Python integer to truncate/wrap.
+        size_bytes: The size of the C-type in bytes.
+        signed: True if the type is signed.
+
+    Returns:
+        A wrapped integer within the valid range of the C-type.
     """
     if size_bytes == 0:
         return 0
@@ -28,7 +35,12 @@ def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
 
 
 class BoundArrayView:
-    """A view into an array field of a BoundTypeInstance, allowing get/set of elements."""
+    """
+    A high-performance view into an array field of a BoundTypeInstance.
+
+    Provides Pythonic access (indexing, slicing, iteration) to C-style arrays 
+    while mapping reads and writes directly to the parent's memory buffer.
+    """
 
     __slots__ = (
         "_parent_instance",
@@ -46,6 +58,9 @@ class BoundArrayView:
         array_type_info: Dict[str, Any],
         array_start_offset_in_parent: int,
     ):
+        """
+        Internal constructor for creating an array view.
+        """
         self._parent_instance = parent_instance
         self._array_field_name = array_field_name  # For error messages
         self._array_subtype_info = array_type_info.get("subtype")
@@ -55,6 +70,7 @@ class BoundArrayView:
             )
         self._array_count = array_type_info.get("count", 0)
 
+        # Pre-calculate sizes for fast indexing
         self._element_size = parent_instance._instance_vtype_accessor.get_type_size(
             self._array_subtype_info
         )
@@ -64,6 +80,7 @@ class BoundArrayView:
         self._array_start_offset_in_parent = array_start_offset_in_parent
 
     def _get_element_offset_in_parent_struct(self, index: int) -> int:
+        """Calculates the absolute byte offset of an array element."""
         if not 0 <= index < self._array_count:
             raise IndexError(
                 f"Array index {index} out of bounds for array '{self._array_field_name}' of size {self._array_count}."
@@ -71,17 +88,21 @@ class BoundArrayView:
         return self._array_start_offset_in_parent + (index * self._element_size)
 
     def __bytes__(self) -> bytes:
-        """Allows direct casting of the array view to bytes."""
+        """
+        Returns an immutable byte snapshot of the entire array.
+        """
         buf = self._parent_instance._instance_buffer
         start = self._parent_instance._instance_offset + self._array_start_offset_in_parent
-        
-        # Calculate total byte size of the array
-        elem_size = self._parent_instance._instance_vtype_accessor.sizeof(self._array_type_def)
-        size = self._array_count * elem_size
-        
+        size = self._array_count * self._element_size
         return bytes(buf[start : start + size])
 
     def __getitem__(self, index: Union[int, slice]) -> Any:
+        """
+        Retrieves an element or a slice of elements from the array.
+        
+        Indices are bounds-checked. Complex subtypes (structs/unions) are returned 
+        as BoundTypeInstances sharing the same memory buffer.
+        """
         if isinstance(index, slice):
             start, stop, step = index.indices(self._array_count)
             return [self[i] for i in range(start, stop, step)]
@@ -97,7 +118,12 @@ class BoundArrayView:
             self._array_subtype_info, element_offset, f"{self._array_field_name}[{index}]"
         )
 
-    def __setitem__(self, index: int, value: Any):
+    def __setitem__(self, index: int, value: Any) -> None:
+        """
+        Writes a value to a specific array index.
+        
+        Clears the parent instance's cache for this field to ensure consistency.
+        """
         element_offset = self._get_element_offset_in_parent_struct(index)
         self._parent_instance._write_data(
             self._array_subtype_info, element_offset, value, f"{self._array_field_name}[{index}]"
@@ -106,9 +132,11 @@ class BoundArrayView:
             del self._parent_instance._instance_cache[self._array_field_name]
 
     def __len__(self) -> int:
+        """Returns the number of elements in the array."""
         return self._array_count
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Any]:
+        """Iterates over the elements of the array."""
         for i in range(self._array_count):
             yield self[i]
 
@@ -120,7 +148,10 @@ class BoundArrayView:
         return f"<BoundArrayView Field='{self._array_field_name}' Count={self._array_count} Items=[{', '.join(items_preview)}]>"
 
     def __add__(self, offset: int) -> "Ptr":
-        """Decay the array into a pointer and apply arithmetic."""
+        """
+        Implements C-style pointer decay. 
+        `arr + 5` returns a Ptr to the 5th element of the array.
+        """
         if not isinstance(offset, int):
             return NotImplemented
         base_addr = self._parent_instance._instance_offset + self._array_start_offset_in_parent
@@ -130,31 +161,33 @@ class BoundArrayView:
             self._parent_instance._instance_vtype_accessor,
         )
 
-    def __eq__(self, other):
-        """Allows `arr == [1, 2, 3]` and comparing arrays to each other."""
-        if isinstance(other, list):
-            if len(self) != len(other):
-                return False
-            return all(self[i] == other[i] for i in range(len(self)))
-        if isinstance(other, BoundArrayView):
+    def __eq__(self, other: Any) -> bool:
+        """Compares array contents against Python lists or other Array Views."""
+        if isinstance(other, (list, BoundArrayView)):
             if len(self) != len(other):
                 return False
             return all(self[i] == other[i] for i in range(len(self)))
         return False
 
-    def __ne__(self, other):
+    def __ne__(self, other: Any) -> bool:
         return not self.__eq__(other)
 
 
 class BoundTypeInstance:
-    """Represents an instance of a DWARF type bound to a memory buffer."""
+    """
+    An instance of a C-type bound to a memory buffer.
+
+    This is the core object used for memory interaction. For structs and unions, 
+    fields are accessed via attribute lookup. For base types and enums, values 
+    can be accessed via indexing `inst[0]` or numeric casting `int(inst)`.
+    """
 
     def __init__(
         self,
         type_name: str,
         type_def: Union[VtypeUserType, VtypeBaseType, VtypeEnum],
         buffer: Union[bytearray, memoryview],
-        vtype_accessor: "VtypeJson",
+        vtype_accessor: Any,
         instance_offset_in_buffer: int = 0,
     ):
         if not isinstance(buffer, (bytearray, memoryview)):
@@ -164,9 +197,10 @@ class BoundTypeInstance:
         self._instance_buffer = buffer
         self._instance_vtype_accessor = vtype_accessor
         self._instance_offset = instance_offset_in_buffer
-        self._instance_cache = {}
+        self._instance_cache: Dict[str, Any] = {}
 
     def _get_value(self) -> Any:
+        """Internal: Deserializes the value if this is a base type or enum."""
         if isinstance(self._instance_type_def, VtypeUserType):
             raise AttributeError(
                 f"'{self._instance_type_name}' is a struct/union and does not have a direct value. Access its fields instead."
@@ -212,7 +246,8 @@ class BoundTypeInstance:
                 f"Cannot get value on internal type: {type(self._instance_type_def).__name__}"
             )
 
-    def _set_value(self, new_value: Any):
+    def _set_value(self, new_value: Any) -> None:
+        """Internal: Serializes and writes a value to memory."""
         if isinstance(self._instance_type_def, VtypeUserType):
             raise AttributeError(
                 f"Cannot set a direct value on a struct/union '{self._instance_type_name}'. Set its fields instead."
@@ -536,6 +571,12 @@ class BoundTypeInstance:
         return _search(self._instance_type_def, name, 0)
 
     def __getattr__(self, name: str) -> Any:
+        """
+        Handles field access for structs and unions.
+        
+        Leverages O(1) flattened field lookups to support anonymous nested structs
+        without recursive overhead.
+        """
         if name.startswith("_instance_") or name.startswith("__"):
             return super().__getattribute__(name)
 
@@ -550,6 +591,8 @@ class BoundTypeInstance:
             field_def, field_offset = flat_fields[name]
 
             val = self._read_data(field_def.type_info, field_offset, name)
+            
+            # Cache complex types (structs/arrays) to avoid repeated instantiation
             if field_def.type_info.get("kind") in ["struct", "union", "array"]:
                 self._instance_cache[name] = val
             return val
@@ -558,7 +601,12 @@ class BoundTypeInstance:
             f"Type '{self._instance_type_name}' has no attribute '{name}'. Use '[0]' or cast for base/enum types."
         )
 
-    def __setattr__(self, name: str, new_value: Any):
+    def __setattr__(self, name: str, new_value: Any) -> None:
+        """
+        Handles field writes for structs and unions.
+        
+        Updates the underlying buffer and invalidates relevant caches.
+        """
         if name.startswith("_instance_") or name.startswith("__"):
             super().__setattr__(name, new_value)
             return
@@ -712,11 +760,15 @@ class BoundTypeInstance:
         return sorted(list(set(a for a in items if a != "_instance_cache")))
 
 class Ptr:
+    """
+    Represents a C-style pointer (memory address + type context).
+
+    Provides C-style pointer arithmetic. Adding an integer to a Ptr shifts 
+    the address by `offset * sizeof(target_type)`.
+    """
     __slots__ = "address", "_subtype_info", "_vtype_accessor"
 
-    def __init__(
-        self, address: int, subtype_info: Optional[Dict[str, Any]], vtype_accessor: "VtypeJson"
-    ):
+    def __init__(self, address: int, subtype_info: Optional[Dict[str, Any]], vtype_accessor: Any):
         self.address = address
         self._subtype_info = subtype_info
         self._vtype_accessor = vtype_accessor
@@ -727,10 +779,12 @@ class Ptr:
 
     @property
     def points_to_type_info(self) -> Optional[Dict[str, Any]]:
+        """Returns the raw ISF type dictionary of the target."""
         return self._subtype_info
 
     @property
     def points_to_type_name(self) -> str:
+        """Returns the string name of the pointed-to type."""
         if not self._subtype_info:
             return "void"
 
@@ -796,6 +850,12 @@ class Ptr:
 
 
 class EnumInstance:
+    """
+    A specific value of an enumeration.
+    
+    Supports string comparison against constant names and integer comparison 
+    against the underlying value.
+    """
     __slots__ = "_enum_def", "_value"
 
     def __init__(self, enum_def: VtypeEnum, value: int):
@@ -804,6 +864,7 @@ class EnumInstance:
 
     @property
     def name(self) -> Optional[str]:
+        """Returns the name of the enumeration constant for this value."""
         return self._enum_def.get_name_for_value(self._value)
 
     def __repr__(self) -> str:
