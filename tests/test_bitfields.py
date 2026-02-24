@@ -1,4 +1,4 @@
-from dwarffi.core import isf_from_dict
+from dwarffi.dffi import DFFI
 
 def test_bitfield_read_write(base_types_little_endian):
     # Simulate:
@@ -6,7 +6,7 @@ def test_bitfield_read_write(base_types_little_endian):
     #     int flag_a : 3;
     #     int flag_b : 5;
     # };
-    isf = isf_from_dict({
+    ffi = DFFI({
         "metadata": {},
         "base_types": base_types_little_endian,
         "user_types": {
@@ -40,7 +40,7 @@ def test_bitfield_read_write(base_types_little_endian):
     })
 
     buf = bytearray(4)
-    inst = isf.create_instance("bitfield_struct", buf)
+    inst = ffi.from_buffer("struct bitfield_struct", buf)
 
     # Write to bitfields
     inst.flag_a = 5  # 101 in binary
@@ -57,19 +57,18 @@ def test_bitfield_read_write(base_types_little_endian):
     assert buf[0] == 0x55
 
 def test_bitfield_truncation_safety(base_types_little_endian):
-    from dwarffi.core import isf_from_dict
-    isf = isf_from_dict({
+    ffi = DFFI({
         "metadata": {},
         "base_types": base_types_little_endian,
         "user_types": {
             "bitfield_struct": {
                 "kind": "struct", "size": 4,
                 "fields": {
-                    "small_flag": { # 2 bits (max value 3)
+                    "small_flag": { 
                         "offset": 0,
                         "type": {"kind": "bitfield", "bit_length": 2, "bit_position": 0, "type": {"kind": "base", "name": "int"}}
                     },
-                    "safe_flag": { # 6 bits
+                    "safe_flag": { 
                         "offset": 0,
                         "type": {"kind": "bitfield", "bit_length": 6, "bit_position": 2, "type": {"kind": "base", "name": "int"}}
                     }
@@ -79,7 +78,7 @@ def test_bitfield_truncation_safety(base_types_little_endian):
         "enums": {}, "symbols": {}, "typedefs": {}
     })
 
-    inst = isf.create_instance("bitfield_struct", bytearray(4))
+    inst = ffi.from_buffer("struct bitfield_struct", bytearray(4))
     
     # Initialize safe_flag
     inst.safe_flag = 0b111111 # 63

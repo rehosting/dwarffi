@@ -224,8 +224,9 @@ def test_nested_array_of_structs(adv_ffi_env):
 
 def test_nested_anonymous_complex(base_types_little_endian):
     """Tests highly nested anonymous unions/structs (common in SoC register maps)."""
-    from dwarffi.core import isf_from_dict
-    isf = isf_from_dict({
+    from dwarffi.dffi import DFFI
+    
+    ffi = DFFI({
         "metadata": {},
         "base_types": base_types_little_endian,
         "user_types": {
@@ -250,7 +251,7 @@ def test_nested_anonymous_complex(base_types_little_endian):
         "enums": {}, "symbols": {}, "typedefs": {}
     })
 
-    reg = isf.create_instance("ctrl_reg", bytearray(4))
+    reg = ffi.from_buffer("struct ctrl_reg", bytearray(4))
     
     # Test flattened access through multiple layers of anonymity
     reg.mode = 7 # 0b111
@@ -263,3 +264,44 @@ def test_nested_anonymous_complex(base_types_little_endian):
     reg.raw = 0x0
     assert reg.mode == 0
     assert reg.enabled == 0
+
+def test_union_in_union_overlap(adv_ffi_env):
+    # struct { union { uint32_t a; union { uint16_t b; uint8_t c; } } }
+    # All members (a, b, c) start at offset 0.
+    union_isf = {
+        "metadata": {},
+        "base_types": {
+            "u32": {"kind": "int", "size": 4, "signed": False, "endian": "little"},
+            "u16": {"kind": "int", "size": 2, "signed": False, "endian": "little"},
+            "u8": {"kind": "int", "size": 1, "signed": False, "endian": "little"},
+        },
+        "user_types": {
+            "nested_union": {
+                "kind": "union", "size": 4,
+                "fields": {
+                    "a": {"offset": 0, "type": {"kind": "base", "name": "u32"}},
+                    "inner": {"offset": 0, "type": {"kind": "union", "name": "inner_union"}}
+                }
+            },
+            "inner_union": {
+                "kind": "union", "size": 2,
+                "fields": {
+                    "b": {"offset": 0, "type": {"kind": "base", "name": "u16"}},
+                    "c": {"offset": 0, "type": {"kind": "base", "name": "u8"}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}, "typedefs": {}
+    }
+    adv_ffi_env.load_isf(union_isf)
+    
+    u = adv_ffi_env.new("struct nested_union")
+    u.a = 0xAABBCCDD
+    
+    # Test overlap
+    assert u.inner.b == 0xCCDD
+    assert u.inner.c == 0xDD
+    
+    # Writing to inner affects outer
+    u.inner.c = 0xFF
+    assert u.a == 0xAABBCCFF
