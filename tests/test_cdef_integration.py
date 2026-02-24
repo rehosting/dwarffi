@@ -219,7 +219,7 @@ def test_cdef_multiple_calls_accumulate_types(tmp_path):
     assert ffi.sizeof("struct b") == 4
 
     # Verify file order grew
-    assert len(ffi._isf_group._file_order) >= 2
+    assert len(ffi._file_order) >= 2
 
 
 @pytest.mark.skipif(GCC is None, reason="gcc not found in PATH")
