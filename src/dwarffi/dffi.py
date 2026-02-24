@@ -522,12 +522,24 @@ class DFFI:
 
         return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset)
 
-    def buffer(self, cdata: BoundTypeInstance, size: Optional[int] = None) -> memoryview:
-        """Returns a memoryview over the underlying bytearray of the cdata."""
-        size = size if size is not None else cdata._instance_type_def.size
-        start = cdata._instance_offset
-        return memoryview(cdata._instance_buffer)[start : start + size]
-    
+    def buffer(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], size: int = -1) -> memoryview:
+        """
+        Returns a zero-copy memoryview of the underlying buffer.
+        """
+        if isinstance(cdata, Ptr):
+            # A pointer doesn't own memory, it just points. 
+            # In a real rehosting environment, this would call out to QEMU's memory read API.
+            raise TypeError("Cannot get a direct buffer from a Ptr. Dereference it first if bound to local memory.")
+            
+        buf = cdata._instance_buffer if hasattr(cdata, "_instance_buffer") else cdata._parent_instance._instance_buffer
+        offset = cdata._instance_offset if hasattr(cdata, "_instance_offset") else cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
+        
+        if size == -1:
+            size = self.sizeof(cdata)
+            
+        # Return a zero-copy slice
+        return memoryview(buf)[offset : offset + size]
+
     def to_bytes(self, cdata: BoundTypeInstance) -> bytes:
         """Returns the underlying bytes of the given cdata instance."""
         size = cdata._instance_type_def.size
@@ -550,24 +562,24 @@ class DFFI:
 
         dest_buf[dest_off : dest_off + n] = src_buf[src_off : src_off + n]
 
-    def string(
-        self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = 4096
-    ) -> bytes:
-        if isinstance(cdata, BoundArrayView):
-            cdata = cdata._parent_instance
-
-        if isinstance(cdata, BoundTypeInstance):
-            raw_bytes = cdata._instance_buffer[cdata._instance_offset :]
-            if maxlen > 0:
-                raw_bytes = raw_bytes[:maxlen]
-            null_idx = raw_bytes.find(b"\x00")
-            return bytes(raw_bytes[:null_idx] if null_idx != -1 else raw_bytes)
-
-        if isinstance(cdata, Ptr):
-            # Without a memory backend plugged in, a raw Ptr can't be dereferenced for string reading.
-            raise NotImplementedError(
-                "Cannot read string from raw Ptr address without an attached memory backend."
-            )
+    def string(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = -1) -> bytes:
+        """
+        Reads a null-terminated string from memory, or exactly maxlen bytes.
+        """
+        # Get the fast memoryview
+        mem = self.buffer(cdata, maxlen if maxlen > 0 else len(cdata._instance_buffer) - cdata._instance_offset)
+        
+        # If maxlen is specified, just return the raw bytes
+        if maxlen > 0:
+            return mem.tobytes()
+            
+        # Otherwise, search for the null terminator rapidly in C
+        byte_data = mem.tobytes()
+        null_idx = byte_data.find(b'\x00')
+        
+        if null_idx == -1:
+            return byte_data # No null terminator found, return everything we have
+        return byte_data[:null_idx]
 
     def unpack(self, cdata: Union[BoundArrayView, BoundTypeInstance], length: int) -> list:
         if isinstance(cdata, BoundArrayView):
