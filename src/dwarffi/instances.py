@@ -532,9 +532,11 @@ class BoundTypeInstance:
             if name in self._instance_cache:
                 return self._instance_cache[name]
 
-            field_def, field_offset = self._find_field(name)
-            if field_def is None:
+            flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
+            if name not in flat_fields:
                 raise AttributeError(f"'{self._instance_type_name}' has no attribute '{name}'")
+
+            field_def, field_offset = flat_fields[name]
 
             val = self._read_data(field_def.type_info, field_offset, name)
             if field_def.type_info.get("kind") in ["struct", "union", "array"]:
@@ -551,10 +553,13 @@ class BoundTypeInstance:
             return
 
         if isinstance(self._instance_type_def, VtypeUserType):
-            field_def, field_offset = self._find_field(name)
-            if field_def is None:
+            flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
+            if name not in flat_fields:
                 super().__setattr__(name, new_value)
                 return
+            
+            field_def, field_offset = flat_fields[name]
+            
             if field_def.type_info.get("kind") == "array":
                 raise NotImplementedError(
                     f"Direct assignment to array field '{name}' is not supported."
