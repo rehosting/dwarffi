@@ -15,10 +15,26 @@ from .types import VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUs
 
 
 class VtypeJson:
+    """
+    Parser and container for Intermediate Structure Format (ISF) data.
+
+    This class handles the ingestion of ISF JSON data (from dictionaries, files, or 
+    compressed .xz streams) and provides a lazy-loading interface to resolve 
+    Dwarf-derived types and symbols.
+    """
+
     def __init__(self, isf_input: Union[Dict[str, Any], str, io.IOBase]):
         """
-        Intelligently initializes an ISF definition from a dictionary, 
-        a file path (str), or a file-like object.
+        Initializes an ISF definition from a dictionary, file path, or file-like object.
+
+        Args:
+            isf_input: ISF data source. Can be a pre-loaded dictionary, a string path 
+                       to a .json or .json.xz file, or an open file-like object.
+
+        Raises:
+            FileNotFoundError: If a string path is provided but doesn't exist.
+            ValueError: If JSON is malformed or required ISF sections are missing.
+            TypeError: If input is not one of the supported types.
         """
         raw_data: Dict[str, Any]
 
@@ -65,7 +81,7 @@ class VtypeJson:
             if "kind" not in definition:
                 raise ValueError(f"User type '{name}' is missing the required 'kind' field (struct, union, etc).")
 
-        # Initialize core data structures
+        # Initialize core data structures and metadata
         self.metadata: VtypeMetadata = VtypeMetadata(raw_data.get("metadata", {}))
         self._raw_base_types: Dict[str, Any] = raw_data.get("base_types", {})
         self._parsed_base_types_cache: Dict[str, VtypeBaseType] = {}
@@ -79,7 +95,15 @@ class VtypeJson:
         self._raw_typedefs: Dict[str, Any] = raw_data.get("typedefs", {})
 
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
-        """Unrolls typedefs into their underlying target type info."""
+        """
+        Unrolls C-style typedefs into their underlying target type information.
+
+        Args:
+            type_info: A dictionary describing a type (e.g., from a struct field).
+
+        Returns:
+            The resolved type dictionary (base, struct, union, pointer, etc).
+        """
         visited = set()
         current = type_info
         while current and current.get("kind") == "typedef":
@@ -95,7 +119,14 @@ class VtypeJson:
             current = td
         return current
 
-    def shift_symbol_addresses(self, delta: int):
+    def shift_symbol_addresses(self, delta: int) -> None:
+        """
+        Updates the addresses of all symbols in the ISF by a specific delta.
+        Useful for handling ASLR/KASLR or rebased kernel modules.
+
+        Args:
+            delta: The integer amount to shift addresses by.
+        """
         for _sym_name, sym_data in self._raw_symbols.items():
             if (
                 sym_data is not None
@@ -106,9 +137,12 @@ class VtypeJson:
         for sym_obj in self._parsed_symbols_cache.values():
             if sym_obj.address not in [None, 0]:
                 sym_obj.address += delta
+        
+        # Invalidate the reverse lookup cache after a shift
         self._address_to_symbol_list_cache = None
 
     def get_base_type(self, name: str) -> Optional[VtypeBaseType]:
+        """Retrieves a cached VtypeBaseType object by name."""
         if name in self._parsed_base_types_cache:
             return self._parsed_base_types_cache[name]
         raw_data = self._raw_base_types.get(name)
@@ -119,6 +153,7 @@ class VtypeJson:
         return obj
 
     def get_user_type(self, name: str) -> Optional[VtypeUserType]:
+        """Retrieves a cached VtypeUserType (struct/union) by name."""
         if name in self._parsed_user_types_cache:
             return self._parsed_user_types_cache[name]
         raw_data = self._raw_user_types.get(name)
@@ -129,6 +164,7 @@ class VtypeJson:
         return obj
 
     def get_enum(self, name: str) -> Optional[VtypeEnum]:
+        """Retrieves a cached VtypeEnum object by name."""
         if name in self._parsed_enums_cache:
             return self._parsed_enums_cache[name]
         raw_data = self._raw_enums.get(name)
@@ -139,6 +175,7 @@ class VtypeJson:
         return obj
 
     def get_symbol(self, name: str) -> Optional[VtypeSymbol]:
+        """Retrieves a cached VtypeSymbol object by name."""
         if name in self._parsed_symbols_cache:
             return self._parsed_symbols_cache[name]
         raw_data = self._raw_symbols.get(name)
@@ -149,6 +186,15 @@ class VtypeJson:
         return obj
 
     def get_type(self, name: str) -> Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]]:
+        """
+        A high-level lookup that resolves a type name, supporting C-style prefixes.
+
+        Args:
+            name: Type name, optionally prefixed with 'struct ', 'union ', or 'enum '.
+
+        Returns:
+            The resolved type object or None.
+        """
         original_name = name
         name_lower = name.lower()
 
@@ -167,6 +213,10 @@ class VtypeJson:
         )
 
     def get_symbols_by_address(self, target_address: int) -> List[VtypeSymbol]:
+        """
+        Performs a reverse lookup to find all symbols located at a memory address.
+        Initializes a reverse lookup map on the first call.
+        """
         if self._address_to_symbol_list_cache is None:
             self._address_to_symbol_list_cache = {}
             for symbol_name in self._raw_symbols.keys():
@@ -178,6 +228,15 @@ class VtypeJson:
         return self._address_to_symbol_list_cache.get(target_address, [])
 
     def get_type_size(self, in_type_info: Dict[str, Any]) -> Optional[int]:
+        """
+        Calculates the byte size of a type based on its ISF type dictionary.
+
+        Args:
+            in_type_info: Raw ISF type dictionary.
+
+        Returns:
+            Total size in bytes or None if the size cannot be determined.
+        """
         type_info = self._resolve_type_info(in_type_info)
         kind, name = type_info.get("kind"), type_info.get("name")
         if kind == "base":
@@ -197,11 +256,12 @@ class VtypeJson:
             return base_type_for_enum.size if base_type_for_enum else None
         if kind == "array":
             count, subtype_info = type_info.get("count"), type_info.get("subtype")
-            if None in [count, subtype_info]:
+            if count is None or subtype_info is None:
                 return None
             element_size = self.get_type_size(subtype_info)
             return count * element_size if element_size is not None else None
         if kind == "bitfield":
+            # For bitfields, the size is the size of the underlying storage unit type
             return self.get_type_size(type_info.get("type")) if type_info.get("type") else None
         return None
 
