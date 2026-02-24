@@ -106,16 +106,53 @@ class DFFI:
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type_size(type_info):
                 return res
+    
+    def _create_instance(
+        self,
+        type_input: Union[str, VtypeUserType, VtypeBaseType, VtypeEnum],
+        buffer: Union[bytes, bytearray, memoryview],
+        instance_offset_in_buffer: int = 0,
+    ) -> BoundTypeInstance:
+        """
+        Creates a BoundTypeInstance by resolving the type across all loaded ISFs
+        and binding it to the provided buffer.
+        """
+        if isinstance(buffer, bytes):
+            processed_buffer = bytearray(buffer)
+        elif isinstance(buffer, (bytearray, memoryview)):
+            processed_buffer = buffer
+        else:
+            raise TypeError("Input buffer must be bytes, bytearray, or memoryview.")
 
-    def _create_instance(self, type_input, buffer, instance_offset_in_buffer=0):
-        for f in self._file_order:
-            try:
-                return self.vtypejsons[f].create_instance(
-                    type_input, buffer, instance_offset_in_buffer
+        if isinstance(type_input, str):
+            type_name = type_input
+            type_def = self.get_type(type_input)
+        else:
+            type_def = type_input
+            type_name = type_def.name
+
+        if type_def is None:
+            raise ValueError(f"Type definition for '{type_name}' not found in any loaded ISF.")
+
+        # Validate size
+        if not hasattr(type_def, "size") or type_def.size is None:
+            type_kind = getattr(type_def, "kind", None)
+            if not (type_kind == "void" and getattr(type_def, "size", None) == 0):
+                raise ValueError(f"Type definition for '{type_name}' lacks a valid size.")
+
+        # Bounds checking
+        if type_def.size is not None:
+            effective_len = len(processed_buffer) - instance_offset_in_buffer
+            if type_def.size > effective_len:
+                raise ValueError(
+                    f"Buffer too small for '{type_name}' at offset {instance_offset_in_buffer}. "
+                    f"Needs {type_def.size} bytes, got {effective_len}."
                 )
-            except ValueError:
-                continue
-        raise ValueError("Type definition not found in any loaded ISF.")
+
+        # Instantiate, passing 'self' (the DFFI object) as the type accessor
+        return BoundTypeInstance(
+            type_name, type_def, processed_buffer, self, instance_offset_in_buffer
+        )
 
     def shift_symbol_addresses(self, delta: int, path: str = None):
         if path is None:

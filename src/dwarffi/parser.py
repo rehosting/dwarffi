@@ -156,53 +156,6 @@ class VtypeJson:
             return self.get_type_size(type_info.get("type")) if type_info.get("type") else None
         return None
 
-    def create_instance(
-        self,
-        type_input: Union[str, VtypeUserType, VtypeBaseType, VtypeEnum],
-        buffer: Union[bytes, bytearray],
-        instance_offset_in_buffer: int = 0,
-    ) -> BoundTypeInstance:
-        type_def: Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]] = None
-        type_name_for_instance: str
-
-        if isinstance(buffer, bytes):
-            processed_buffer = bytearray(buffer)
-        elif isinstance(buffer, bytearray):
-            processed_buffer = buffer
-        else:
-            raise TypeError("Input buffer for create_instance must be bytes or bytearray.")
-
-        if isinstance(type_input, str):
-            type_name_for_instance = type_input
-            type_def = self.get_type(type_input)
-        elif isinstance(type_input, (VtypeUserType, VtypeBaseType, VtypeEnum)):
-            type_def = type_input
-            type_name_for_instance = type_def.name
-        else:
-            raise TypeError(f"type_input must be a string or Vtype object, got {type(type_input)}")
-
-        if type_def:
-            if not hasattr(type_def, "size") or type_def.size is None:
-                type_kind = type_def.kind if hasattr(type_def, "kind") else None
-                if not (type_kind == "void" and type_def.size == 0):
-                    raise ValueError(
-                        f"Type definition for '{type_name_for_instance}' lacks a valid size."
-                    )
-
-            if type_def.size is not None:
-                effective_len = len(processed_buffer) - instance_offset_in_buffer
-                if type_def.size > effective_len:
-                    raise ValueError(
-                        f"Buffer too small for '{type_name_for_instance}' at offset {instance_offset_in_buffer}."
-                    )
-            return BoundTypeInstance(
-                type_name_for_instance, type_def, processed_buffer, self, instance_offset_in_buffer
-            )
-
-        raise ValueError(
-            f"Type definition for '{type_input if isinstance(type_input, str) else type_input.name}' not found."
-        )
-
     def __repr__(self) -> str:
         return (
             f"<VtypeJson RawBaseTypes={len(self._raw_base_types)} RawUserTypes={len(self._raw_user_types)} "
