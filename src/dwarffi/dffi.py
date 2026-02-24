@@ -679,11 +679,25 @@ class DFFI:
 
     def string(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = -1) -> bytes:
         """
-        Zero-copy reads a null-terminated string from memory, or exactly maxlen bytes.
+        Reads a null-terminated string from memory, or returns the name of an enum value.
+        
+        Matches CFFI behavior:
+        - For enums: returns the name of the enumerator as bytes.
+        - For others: reads a null-terminated C-string from the underlying buffer.
         """
         if isinstance(cdata, Ptr):
             raise TypeError("Cannot read string directly from a Ptr.")
-        # Get the fast memoryview 
+
+        # 1. Handle Enums (CFFI parity)
+        # If the instance is an enum, return its constant name
+        if isinstance(cdata, BoundTypeInstance) and isinstance(cdata._instance_type_def, VtypeEnum):
+            val = cdata._get_value() # Returns EnumInstance
+            name = val.name
+            if name:
+                return name.encode("utf-8")
+            return str(int(val)).encode("utf-8") # Fallback to numeric string if name unknown
+
+        # 2. Handle standard memory-based strings
         if isinstance(cdata, BoundArrayView):
             buf = cdata._parent_instance._instance_buffer
             offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
