@@ -83,11 +83,17 @@ class DFFI:
             if res := self.vtypejsons[f].get_enum(name):
                 return res
 
-    def get_symbol(self, name: str):
+    def get_symbol(self, name: str, strict: bool = False) -> Optional[VtypeSymbol]:
+        """
+        Look up a symbol by name across all loaded ISFs.
+        """
         for f in self._file_order:
-            res = self.vtypejsons[f].get_symbol(name)
-            if res and not (hasattr(res, "address") and res.address in [None, 0]):
-                return res
+            if sym := self.vtypejsons[f].get_symbol(name):
+                return sym
+        
+        if strict:
+            raise KeyError(f"Symbol '{name}' not found in any loaded ISF files ({self._file_order}).")
+        return None
 
     def get_type(self, name: str):
         for f in self._file_order:
