@@ -11,7 +11,6 @@ except ImportError:
 
     _JSON_LIB_USED = "json"
 
-from .instances import BoundTypeInstance
 from .types import VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
 
 
@@ -29,7 +28,7 @@ class VtypeJson:
         self._address_to_symbol_list_cache: Optional[Dict[int, List[VtypeSymbol]]] = None
         self._raw_typedefs: Dict[str, Any] = data.get("typedefs", {})
 
-    def resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
+    def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
         """Unrolls typedefs into their underlying target type info."""
         visited = set()
         current = type_info
@@ -129,7 +128,7 @@ class VtypeJson:
         return self._address_to_symbol_list_cache.get(target_address, [])
 
     def get_type_size(self, in_type_info: Dict[str, Any]) -> Optional[int]:
-        type_info = self.resolve_type_info(in_type_info)
+        type_info = self._resolve_type_info(in_type_info)
         kind, name = type_info.get("kind"), type_info.get("name")
         if kind == "base":
             base_def = self.get_base_type(name) if name else None

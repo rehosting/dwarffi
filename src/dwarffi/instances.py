@@ -325,7 +325,7 @@ class BoundTypeInstance:
         field_offset_in_struct: int,
         field_name_for_error: str,
     ) -> Any:
-        field_type_info = self._instance_vtype_accessor.resolve_type_info(in_field_type_info)
+        field_type_info = self._instance_vtype_accessor._resolve_type_info(in_field_type_info)
         kind = field_type_info.get("kind")
         name = field_type_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct
@@ -397,7 +397,7 @@ class BoundTypeInstance:
         value_to_write: Any,
         field_name_for_error: str,
     ):
-        field_type_info = self._instance_vtype_accessor.resolve_type_info(in_field_type_info)
+        field_type_info = self._instance_vtype_accessor._resolve_type_info(in_field_type_info)
         kind = field_type_info.get("kind")
         name = field_type_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct
