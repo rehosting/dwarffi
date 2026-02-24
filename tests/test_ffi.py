@@ -14,6 +14,8 @@ def ffi_env(tmp_path):
         "base_types": {
             "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
             "pointer": {"kind": "pointer", "size": 8, "endian": "little"},
+            "char": {"kind": "char", "size": 1, "signed": False, "endian": "little"},
+            "unsigned long": {"kind": "int", "size": 8, "signed": False, "endian": "little"},
         },
         "user_types": {
             "task_struct": {
@@ -108,3 +110,54 @@ def test_ffi_buffer_and_memmove(ffi_env: DFFI):
     view = ffi_env.buffer(task2)
     assert len(view) == 16
     assert view[0:4] == struct.pack("<i", 100)
+
+def test_bytes_casting_and_equality(ffi_env):
+    # Assuming ffi_env provides a basic 'int' of 4 bytes
+    inst = ffi_env.new("int", 0x11223344)
+    
+    # 1. Test native bytes() cast
+    raw_bytes = bytes(inst)
+    assert raw_bytes == b"\x44\x33\x22\x11"  # Assuming Little Endian
+    
+    # 2. Test direct equality against bytes/bytearray (Zero-copy check)
+    assert inst == b"\x44\x33\x22\x11"
+    assert inst == bytearray(b"\x44\x33\x22\x11")
+    
+    # 3. Ensure inequality works
+    assert inst != b"\x00\x00\x00\x00"
+    
+    # 4. Size mismatches evaluate to False, not crash
+    assert inst != b"\x44\x33\x22"
+
+
+def test_ffi_string_maxlen_and_unterminated(ffi_env):
+    # 1. Test unterminated string (should read up to end of buffer)
+    # create a char array of size 4 without a null terminator
+    unterminated = ffi_env.new("char[4]", b"abcd")
+    assert ffi_env.string(unterminated) == b"abcd"
+
+    # 2. Test maxlen truncation
+    long_str = ffi_env.new("char[20]", b"hello world")
+    
+    # Normally reads up to the null byte
+    assert ffi_env.string(long_str) == b"hello world"
+    
+    # Maxlen cuts it short
+    assert ffi_env.string(long_str, maxlen=5) == b"hello"
+
+def test_typeof_string_parsing(ffi_env):
+    # Dynamic Array
+    t_array = ffi_env.typeof("int[15]")
+    assert t_array["kind"] == "array"
+    assert t_array["count"] == 15
+    assert t_array["subtype"]["name"] == "int"
+
+    # Pointer parsing
+    t_ptr = ffi_env.typeof("struct task_struct *")
+    assert t_ptr["kind"] == "pointer"
+    assert t_ptr["subtype"]["name"] == "task_struct"
+
+    # Pointer to array isn't explicitly natively supported by the regex yet, 
+    # but base cases should parse safely.
+    t_base = ffi_env.typeof("  unsigned long  ") # strip spaces
+    assert t_base.name == "unsigned long"
