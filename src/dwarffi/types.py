@@ -1,6 +1,6 @@
 import base64
 import struct
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 class SourceMetadata:
@@ -141,7 +141,7 @@ class VtypeStructField:
 class VtypeUserType:
     """Represents a user-defined type (struct or union) in the ISF."""
 
-    __slots__ = "name", "size", "fields", "kind"
+    __slots__ = "name", "size", "fields", "kind", "_flattened_fields", "_aggregated_struct"
 
     def __init__(self, name: str, data: Dict[str, Any]):
         self.name: str = name
@@ -152,6 +152,102 @@ class VtypeUserType:
             if f_data
         }
         self.kind: Optional[str] = data.get("kind")  # "struct" or "union"
+    
+    def get_flattened_fields(self, vtype_accessor) -> Dict[str, Tuple[Any, int]]:
+        """O(1) lookup table for all fields, flattening anonymous unions/structs."""
+        if hasattr(self, "_flattened_fields"):
+            return self._flattened_fields
+
+        flattened = {}
+
+        def _flatten(t_def, current_offset):
+            for name, field in t_def.fields.items():
+                if not field.anonymous:
+                    flattened[name] = (field, current_offset + field.offset)
+                else:
+                    # Resolve anonymous type and recurse
+                    sub_t_info = vtype_accessor._resolve_type_info(field.type_info)
+                    sub_t = vtype_accessor.get_type(sub_t_info.get("name"))
+                    if isinstance(sub_t, VtypeUserType):
+                        _flatten(sub_t, current_offset + field.offset)
+
+        _flatten(self, 0)
+        self._flattened_fields = flattened
+        return self._flattened_fields
+
+    def get_aggregated_struct(self, vtype_accessor) -> Optional[struct.Struct]:
+        """Compiles flat, primitive-only structs into a single fast C-struct."""
+        if hasattr(self, "_aggregated_struct"):
+            return self._aggregated_struct
+            
+        fields_flat = self.get_flattened_fields(vtype_accessor)
+        
+        # Sort fields by absolute offset to read sequentially
+        sorted_fields = sorted(fields_flat.values(), key=lambda x: x[1])
+        
+        fmt_string = "<" # Assume little endian for the block initially
+        current_offset = 0
+        
+        for field_def, abs_offset in sorted_fields:
+            if abs_offset < current_offset:
+                # We hit an overlap (like a union). struct.Struct cannot easily pack 
+                # overlapping memory sequentially. Fall back to individual field access.
+                self._aggregated_struct = None
+                return None
+
+            t_info = vtype_accessor._resolve_type_info(field_def.type_info)
+            if t_info.get("kind") != "base":
+                self._aggregated_struct = None
+                return None 
+                
+            base_type = vtype_accessor.get_base_type(t_info.get("name"))
+            if not base_type:
+                self._aggregated_struct = None
+                return None
+
+            # Handle C-compiler Padding gaps
+            if abs_offset > current_offset:
+                fmt_string += f"{abs_offset - current_offset}x"
+                current_offset = abs_offset
+                
+            base_struct = base_type.get_compiled_struct()
+            if not base_struct:
+                self._aggregated_struct = None
+                return None
+                
+            # Extract just the format character (e.g., 'i' from '<i')
+            fmt_string += base_struct.format[-1]
+            current_offset += base_type.size
+
+        try:
+            self._aggregated_struct = struct.Struct(fmt_string)
+        except struct.error:
+            self._aggregated_struct = None
+            
+        return self._aggregated_struct
+    
+    def _compile_flattened_fields(self, vtype_accessor):
+        """Builds an O(1) lookup table for all fields, including anonymous ones."""
+        if hasattr(self, "_flattened_fields"):
+            return self._flattened_fields
+
+        flattened = {}
+        
+        def _flatten(t_def, current_offset):
+            for name, field in t_def.fields.items():
+                if not field.anonymous:
+                    # Store the absolute offset and the field definition
+                    flattened[name] = (field, current_offset + field.offset)
+                else:
+                    # Resolve anonymous type and recurse
+                    sub_t_info = vtype_accessor._resolve_type_info(field.type_info)
+                    sub_t = vtype_accessor.get_type(sub_t_info.get("name"))
+                    if isinstance(sub_t, VtypeUserType):
+                        _flatten(sub_t, current_offset + field.offset)
+
+        _flatten(self, 0)
+        self._flattened_fields = flattened
+        return self._flattened_fields
 
     def __repr__(self) -> str:
         return f"<VtypeUserType Name='{self.name}' Kind='{self.kind}' Size={self.size} Fields={len(self.fields)}>"
