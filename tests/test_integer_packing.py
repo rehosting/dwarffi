@@ -1,29 +1,25 @@
 import pytest
-
-from dwarffi.parser import isf_from_dict
-
+from dwarffi.dffi import DFFI
 
 @pytest.fixture
 def ffi_env():
     """Generates an ISF containing all major integer sizes and signednesses."""
-    return isf_from_dict(
-        {
-            "metadata": {},
-            "base_types": {
-                "u8": {"kind": "int", "size": 1, "signed": False, "endian": "little"},
-                "i8": {"kind": "int", "size": 1, "signed": True, "endian": "little"},
-                "u16": {"kind": "int", "size": 2, "signed": False, "endian": "little"},
-                "i16": {"kind": "int", "size": 2, "signed": True, "endian": "little"},
-                "u32": {"kind": "int", "size": 4, "signed": False, "endian": "little"},
-                "i32": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
-                "u64": {"kind": "int", "size": 8, "signed": False, "endian": "little"},
-                "i64": {"kind": "int", "size": 8, "signed": True, "endian": "little"},
-            },
-            "user_types": {},
-            "enums": {},
-            "symbols": {},
-        }
-    )
+    return DFFI({
+        "metadata": {},
+        "base_types": {
+            "u8": {"kind": "int", "size": 1, "signed": False, "endian": "little"},
+            "i8": {"kind": "int", "size": 1, "signed": True, "endian": "little"},
+            "u16": {"kind": "int", "size": 2, "signed": False, "endian": "little"},
+            "i16": {"kind": "int", "size": 2, "signed": True, "endian": "little"},
+            "u32": {"kind": "int", "size": 4, "signed": False, "endian": "little"},
+            "i32": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+            "u64": {"kind": "int", "size": 8, "signed": False, "endian": "little"},
+            "i64": {"kind": "int", "size": 8, "signed": True, "endian": "little"},
+        },
+        "user_types": {},
+        "enums": {},
+        "symbols": {},
+    })
 
 
 @pytest.mark.parametrize(
@@ -61,31 +57,36 @@ def ffi_env():
     ],
 )
 def test_integer_packing_boundaries(ffi_env, ctype, input_val, expected_val):
-    # 1. Test Base Type direct assignment ([0])
     buf = bytearray(8)
-    inst = ffi_env.create_instance(ctype, buf)
+    inst = ffi_env.from_buffer(ctype, buf)
 
     inst[0] = input_val
     assert int(inst) == expected_val
     assert inst[0] == expected_val
 
 
-def test_integer_packing_in_struct(ffi_env):
+def test_integer_packing_in_struct():
     """Ensure struct fields also properly wrap using the same logic."""
-    # We dynamically add a struct to the ffi_env containing the types
-    ffi_env._raw_user_types["test_struct"] = {
-        "kind": "struct",
-        "size": 5,
-        "fields": {
-            "a": {"offset": 0, "type": {"kind": "base", "name": "i32"}},
-            "b": {"offset": 4, "type": {"kind": "base", "name": "u8"}},
+    ffi_env = DFFI({
+        "metadata": {},
+        "base_types": {
+            "i32": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+            "u8": {"kind": "int", "size": 1, "signed": False, "endian": "little"},
         },
-    }
-    # Clear cache to recognize the new struct
-    ffi_env._parsed_user_types_cache.clear()
+        "user_types": {
+            "test_struct": {
+                "kind": "struct", "size": 5,
+                "fields": {
+                    "a": {"offset": 0, "type": {"kind": "base", "name": "i32"}},
+                    "b": {"offset": 4, "type": {"kind": "base", "name": "u8"}},
+                },
+            }
+        },
+        "enums": {}, "symbols": {}
+    })
 
     buf = bytearray(5)
-    inst = ffi_env.create_instance("test_struct", buf)
+    inst = ffi_env.from_buffer("struct test_struct", buf)
 
     # Set massively out of bounds values
     inst.a = 0xFFFFFFFF  # Should wrap to -1 for i32

@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI, Ptr
 
 
 @pytest.fixture
@@ -227,3 +227,23 @@ def test_linked_list_traversal(ffi_env):
     # Resolve node_b using the pointer's address as an offset
     node_b_final = ffi_env.from_buffer("struct node", buf, offset=ptr_to_b.address)
     assert node_b_final.val == 202 # Success!
+
+def test_double_pointer_casting(ffi_env):
+    # void** (pointer to pointer)
+    # ptr_to_ptr (addr 0x0) -> ptr_to_val (addr 0x8) -> value (42)
+    buf = bytearray(16)
+    import struct
+    struct.pack_into("<Q", buf, 0, 8) # Offset 0 points to offset 8
+    struct.pack_into("<I", buf, 8, 42) # Offset 8 contains the int 42
+    
+    # 1. Cast offset 0 as a pointer to an int pointer
+    pp = ffi_env.from_buffer("int **", buf)
+    
+    # 2. Dereference first level
+    p = pp[0] # Returns a Ptr(address=8, ToType='int')
+    assert isinstance(p, Ptr)
+    assert p.address == 8
+    
+    # 3. Use from_buffer with the resolved address to get the final value
+    final_val = ffi_env.from_buffer("int", buf, offset=p.address)
+    assert int(final_val) == 42

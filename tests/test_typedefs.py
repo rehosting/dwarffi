@@ -72,3 +72,22 @@ def test_typedef_in_struct_fields(ffi_env: DFFI):
     assert s.count == 999
     assert s.ptr.address == 0x2000
     assert s.ptr.points_to_type_name == "int"
+
+def test_complex_typedef_chain(ffi_env):
+    # int -> handle_t -> context_t -> state_t
+    chain_isf = {
+        "metadata": {},
+        "base_types": {"int": {"kind": "int", "size": 4, "signed": True, "endian": "little"}},
+        "typedefs": {
+            "handle_t": {"kind": "base", "name": "int"},
+            "context_t": {"kind": "typedef", "name": "handle_t"},
+            "state_t": {"kind": "typedef", "name": "context_t"},
+        },
+        "user_types": {}, "enums": {}, "symbols": {}
+    }
+    ffi_env.load_isf(chain_isf)
+    
+    # sizeof should unroll the entire chain to find 'int'
+    assert ffi_env.sizeof("state_t") == 4
+    val = ffi_env.new("state_t", 5)
+    assert int(val) == 5
