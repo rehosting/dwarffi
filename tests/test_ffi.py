@@ -247,3 +247,62 @@ def test_double_pointer_casting(ffi_env):
     # 3. Use from_buffer with the resolved address to get the final value
     final_val = ffi_env.from_buffer("int", buf, offset=p.address)
     assert int(final_val) == 42
+
+def test_ffi_unpack_api(ffi_env):
+    # Create an array of 10 integers
+    arr = ffi_env.new("int[10]", [0, 10, 20, 30, 40, 50, 60, 70, 80, 90])
+    
+    # Unpack the first 5 elements
+    unpacked = ffi_env.unpack(arr, 5)
+    assert unpacked == [0, 10, 20, 30, 40]
+    
+    # Unpack more elements than the array holds (should clamp safely)
+    unpacked_all = ffi_env.unpack(arr, 15)
+    assert len(unpacked_all) == 10
+    assert unpacked_all[-1] == 90
+    
+    # Attempting to unpack a standard struct should raise a TypeError
+    task = ffi_env.new("struct task_struct")
+    with pytest.raises(TypeError, match="currently requires an array view"):
+        ffi_env.unpack(task, 5)
+
+def test_buffer_size_and_read_only_validation(ffi_env):
+    # 1. Test Buffer Too Small
+    # task_struct requires 16 bytes. Provide only 10.
+    small_buf = bytearray(10)
+    with pytest.raises(ValueError, match="Buffer too small for 'task_struct'"):
+        ffi_env.from_buffer("struct task_struct", small_buf)
+        
+    # Test Buffer Too Small due to offset
+    valid_buf = bytearray(16)
+    with pytest.raises(ValueError, match="Buffer too small"):
+        # Buffer is 16 bytes, but starting at offset 4 leaves only 12 bytes
+        ffi_env.from_buffer("struct task_struct", valid_buf, offset=4)
+
+    # 2. Test Read-Only Protection
+    read_only_bytes = b"\x00" * 16
+    
+    # Should work fine if we just want to read (copies to bytearray internally or uses memoryview)
+    read_inst = ffi_env.from_buffer("struct task_struct", read_only_bytes)
+    assert read_inst.pid == 0
+    
+    # Should explicitly reject if we strictly demand writable memory
+    with pytest.raises(TypeError, match="Buffer is read-only"):
+        ffi_env.from_buffer("struct task_struct", read_only_bytes, require_writable=True)
+
+def test_dynamic_array_of_pointers(ffi_env):
+    # Allocate an array of 5 pointers to ints
+    ptr_arr = ffi_env.new("int *[5]")
+    
+    assert len(ptr_arr) == 5
+    # Size should be 5 * 8 bytes (pointer size) = 40 bytes
+    assert ffi_env.sizeof(ptr_arr) == 40
+    
+    # Assign an address to the second pointer
+    ptr_arr[1] = 0xDEADBEEF
+    
+    # Read it back and verify it returns a Ptr object natively
+    p = ptr_arr[1]
+    assert isinstance(p, Ptr)
+    assert p.address == 0xDEADBEEF
+    assert p.points_to_type_name == "int"

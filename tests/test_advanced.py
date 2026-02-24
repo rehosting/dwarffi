@@ -305,3 +305,24 @@ def test_union_in_union_overlap(adv_ffi_env):
     # Writing to inner affects outer
     u.inner.c = 0xFF
     assert u.a == 0xAABBCCFF
+
+def test_function_pointer_repr(adv_ffi_env):
+    # Inject a struct with a function pointer into the environment
+    adv_ffi_env.vtypejsons[adv_ffi_env._file_order[0]]._raw_user_types["callback_struct"] = {
+        "kind": "struct", "size": 8,
+        "fields": {
+            "on_click": {
+                "offset": 0,
+                # Simulate dwarf2json's "function" kind
+                "type": {"kind": "function", "name": "click_handler_fn"}
+            }
+        }
+    }
+    
+    inst = adv_ffi_env.new("struct callback_struct")
+    
+    # Reading a function type should gracefully return its descriptive string representation
+    func_repr = inst.on_click
+    assert isinstance(func_repr, str)
+    assert "FunctionType" in func_repr
+    assert "click_handler_fn" in func_repr
