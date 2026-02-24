@@ -188,3 +188,42 @@ def test_ffi_memmove_raw_bytes(ffi_env):
     assert dst.pid == 1
     assert dst.state.name == "TASK_DEAD" # State 2
     assert dst.flags == 3
+
+def test_linked_list_traversal(ffi_env):
+    """Simulate traversing a linked list by casting pointer addresses to struct instances."""
+    node_def = {
+        "metadata": {},
+        "base_types": {
+            "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+            "pointer": {"kind": "pointer", "size": 8, "endian": "little"},
+        },
+        "user_types": {
+            "node": {
+                "kind": "struct", "size": 16,
+                "fields": {
+                    "val": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "next": {"offset": 8, "type": {"kind": "pointer", "subtype": {"kind": "struct", "name": "node"}}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}, "typedefs": {}
+    }
+    # Using the new direct dictionary loading
+    ffi_env.load_isf(node_def)
+
+    buf = bytearray(32)
+    node_a = ffi_env.from_buffer("struct node", buf, offset=0)
+    node_a.val = 101
+    node_a.next = 16 # Point to offset 16
+
+    # Bind node_b to the SAME buffer with an offset (Zero-copy)
+    node_b = ffi_env.from_buffer("struct node", buf, offset=16)
+    node_b.val = 202
+    node_b.next = 0
+
+    assert node_a.val == 101
+    ptr_to_b = node_a.next
+    
+    # Resolve node_b using the pointer's address as an offset
+    node_b_final = ffi_env.from_buffer("struct node", buf, offset=ptr_to_b.address)
+    assert node_b_final.val == 202 # Success!

@@ -190,3 +190,24 @@ def test_primitive_bounds_and_signedness(ffi_arm32_le: DFFI):
     assert int_inst[0] == -1  # Because 'int' is marked signed in the ISF
 
     # Note: If we added an 'unsigned int' to the ISF, 0xFFFFFFFF would stay positive.
+
+def test_endian_migration(ffi_arm32_le, ffi_mips32_be):
+    """Test reading from a Little Endian struct and writing to a Big Endian one."""
+    # LE Instance (ARM)
+    le_task = ffi_arm32_le.new("struct cpu_context", {"pc": 0x11223344, "status": 0x55})
+    le_bytes = bytes(le_task)
+    assert le_bytes[0] == 0x44 # LE: LSB first
+    
+    # BE Instance (MIPS)
+    be_task = ffi_mips32_be.new("struct cpu_context")
+    
+    # Manually migrate values
+    be_task.pc = le_task.pc
+    be_task.status = le_task.status
+    
+    be_bytes = bytes(be_task)
+    assert be_bytes[0] == 0x11 # BE: MSB first
+    
+    # Values should match despite underlying byte differences
+    assert be_task.pc == 0x11223344
+    assert be_task.status == 0x55

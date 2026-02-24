@@ -221,3 +221,45 @@ def test_nested_array_of_structs(adv_ffi_env):
     assert len(slice_out) == 3
     assert slice_out[0].inner.val == 100
     assert slice_out[2].arr[0] == 777
+
+def test_nested_anonymous_complex(base_types_little_endian):
+    """Tests highly nested anonymous unions/structs (common in SoC register maps)."""
+    from dwarffi.core import isf_from_dict
+    isf = isf_from_dict({
+        "metadata": {},
+        "base_types": base_types_little_endian,
+        "user_types": {
+            "ctrl_reg": {
+                "kind": "struct", "size": 4,
+                "fields": {
+                    "raw": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "bits": {
+                        "offset": 0, "anonymous": True,
+                        "type": {"kind": "struct", "name": "bits_layout"}
+                    }
+                }
+            },
+            "bits_layout": {
+                "kind": "struct", "size": 4,
+                "fields": {
+                    "enabled": {"offset": 0, "type": {"kind": "bitfield", "bit_length": 1, "bit_position": 0, "type": {"kind": "base", "name": "int"}}},
+                    "mode": {"offset": 0, "type": {"kind": "bitfield", "bit_length": 3, "bit_position": 1, "type": {"kind": "base", "name": "int"}}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}, "typedefs": {}
+    })
+
+    reg = isf.create_instance("ctrl_reg", bytearray(4))
+    
+    # Test flattened access through multiple layers of anonymity
+    reg.mode = 7 # 0b111
+    reg.enabled = 1
+    
+    # 0b111 (mode) << 1 | 1 (enabled) = 0b1111 = 0xF
+    assert reg.raw == 0xF
+    
+    # Test writing to 'raw' updates flattened bits
+    reg.raw = 0x0
+    assert reg.mode == 0
+    assert reg.enabled == 0
