@@ -854,3 +854,102 @@ class DFFI:
             pseudo_path = f"<cdef_{id(source)}>"
             self._file_order.append(pseudo_path)
             self.vtypejsons[pseudo_path] = vtype_obj
+
+    def pretty_print(self, cdata: Any, indent: int = 0, name: str = None) -> str:
+        """
+        Recursively formats a bound instance, array, or pointer into a human-readable string.
+        """
+        prefix = "  " * indent
+        field_label = f"{name}: " if name else ""
+
+        # Handle Pointers
+        if isinstance(cdata, Ptr):
+            return f"{prefix}{field_label}{repr(cdata)}"
+
+        # Handle Arrays
+        if isinstance(cdata, BoundArrayView):
+            count = len(cdata)
+            if count == 0:
+                return f"{prefix}{field_label}[]"
+            if count > 10:
+                preview = ", ".join(repr(cdata[i]) for i in range(3))
+                return f"{prefix}{field_label}[{preview}, ... ({count} items)]"
+            
+            res = [f"{prefix}{field_label}["]
+            for i in range(count):
+                res.append(self.pretty_print(cdata[i], indent + 1))
+            res.append(f"{prefix}]")
+            return "\n".join(res)
+
+        # Handle Structs/Unions/Base Types
+        if isinstance(cdata, BoundTypeInstance):
+            type_def = cdata._instance_type_def
+            type_name = cdata._instance_type_name
+            
+            if not isinstance(type_def, VtypeUserType):
+                val = cdata._get_value()
+                return f"{prefix}{field_label}{val} ({type_name})"
+
+            res = [f"{prefix}{field_label}{type_name} {{"]
+            flat_fields = type_def.get_flattened_fields(self)
+            for f_name in flat_fields:
+                val = getattr(cdata, f_name)
+                res.append(self.pretty_print(val, indent + 1, f_name))
+            res.append(f"{prefix}}}")
+            return "\n".join(res)
+
+        return f"{prefix}{field_label}{repr(cdata)}"
+
+    def to_dict(self, cdata: Any) -> Any:
+        """
+        Recursively converts a bound instance or array into a standard Python dictionary/list.
+        """
+        if isinstance(cdata, BoundArrayView):
+            return [self.to_dict(item) for item in cdata]
+
+        if isinstance(cdata, BoundTypeInstance):
+            type_def = cdata._instance_type_def
+            if not isinstance(type_def, VtypeUserType):
+                val = cdata._get_value()
+                return val._value if hasattr(val, '_value') else val
+
+            res = {}
+            flat_fields = type_def.get_flattened_fields(self)
+            for f_name in flat_fields:
+                val = getattr(cdata, f_name)
+                res[f_name] = self.to_dict(val)
+            return res
+
+        if isinstance(cdata, Ptr):
+            return cdata.address
+
+        return cdata
+
+    def inspect_layout(self, ctype: str) -> None:
+        """
+        Prints the exact memory layout of a type (pahole-style), showing offsets and padding.
+        """
+        t = self.typeof(ctype)
+        if not isinstance(t, VtypeUserType):
+            print(f"Type: {ctype}, Size: {self.sizeof(t)} bytes (Primitive)")
+            return
+
+        print(f"Layout of {ctype} (Size: {t.size} bytes):")
+        print(f"{'Offset':<8} {'Size':<6} {'Field':<20} {'Type'}")
+        print("-" * 60)
+
+        flat_fields = t.get_flattened_fields(self)
+        sorted_fields = sorted(flat_fields.items(), key=lambda x: x[1][1])
+
+        last_end = 0
+        for f_name, (f_def, abs_offset) in sorted_fields:
+            if abs_offset > last_end:
+                print(f"{last_end:<8} {abs_offset - last_end:<6} [PADDING]")
+            
+            f_size = self.get_type_size(f_def.type_info)
+            f_type_name = f_def.type_info.get("name") or f_def.type_info.get("kind")
+            print(f"{abs_offset:<8} {f_size:<6} {f_name:<20} {f_type_name}")
+            last_end = abs_offset + (f_size or 0)
+
+        if last_end < t.size:
+            print(f"{last_end:<8} {t.size - last_end:<6} [PADDING]")
