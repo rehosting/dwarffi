@@ -20,16 +20,33 @@ from dwarffi.core import (
 
 
 class DFFI:
-    def __init__(self, isf_path: Optional[str] = None):
+    def __init__(self, isf_input: Optional[Union[str, dict, list]] = None):
         self._file_order = []
         self.vtypejsons = {}
-        if isf_path:
-            self.load_isf(isf_path)
 
-    def load_isf(self, path: str):
-        if path not in self.vtypejsons:
-            self._file_order.append(path)
-            self.vtypejsons[path] = load_isf_json(path)
+        if isf_input is not None:
+            if isinstance(isf_input, list):
+                for item in isf_input:
+                    self.load_isf(item)
+            else:
+                self.load_isf(isf_input)
+
+    def load_isf(self, isf_input: Union[str, dict]):
+        """
+        Loads a singular ISF definition from a file path or a direct dictionary.
+        """
+        if isinstance(isf_input, dict):
+            # Generate a unique pseudo-path for the dictionary entry
+            pseudo_path = f"<dict_{id(isf_input)}>"
+            if pseudo_path not in self.vtypejsons:
+                self._file_order.append(pseudo_path)
+                self.vtypejsons[pseudo_path] = isf_from_dict(isf_input)
+        elif isinstance(isf_input, str):
+            if isf_input not in self.vtypejsons:
+                self._file_order.append(isf_input)
+                self.vtypejsons[isf_input] = load_isf_json(isf_input)
+        else:
+            raise TypeError("load_isf expects a file path (str) or a dictionary (dict)")
     
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
         visited = set()
