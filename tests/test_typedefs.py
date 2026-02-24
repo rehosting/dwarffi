@@ -91,3 +91,22 @@ def test_complex_typedef_chain(ffi_env):
     assert ffi_env.sizeof("state_t") == 4
     val = ffi_env.new("state_t", 5)
     assert int(val) == 5
+
+def test_circular_typedef_error():
+    """Ensures circular typedef chains raise a ValueError."""
+    circular_isf = {
+        "metadata": {},
+        "base_types": {},
+        "typedefs": {
+            "A": {"kind": "typedef", "name": "B"},
+            "B": {"kind": "typedef", "name": "A"}
+        },
+        "user_types": {}, "enums": {}, "symbols": {}
+    }
+    
+    ffi = DFFI(circular_isf)
+    
+    import pytest
+    with pytest.raises(ValueError, match="Circular typedef: A"):
+        # Attempting to resolve either should trigger the detection
+        ffi.sizeof("A")
