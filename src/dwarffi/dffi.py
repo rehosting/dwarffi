@@ -14,22 +14,99 @@ from dwarffi.core import (
     Ptr,
     VtypeBaseType,
     VtypeEnum,
-    VtypeJsonGroup,
     VtypeUserType,
     load_isf_json,
+    isf_from_dict,
 )
 
 
 class DFFI:
     def __init__(self, isf_path: Optional[str] = None):
-        self._isf_group = VtypeJsonGroup([])
+        self._file_order = []
+        self.vtypejsons = {}
         if isf_path:
             self.load_isf(isf_path)
 
     def load_isf(self, path: str):
-        if path not in self._isf_group.vtypejsons:
-            self._isf_group._file_order.append(path)
-            self._isf_group.vtypejsons[path] = load_isf_json(path)
+        if path not in self.vtypejsons:
+            self._file_order.append(path)
+            self.vtypejsons[path] = load_isf_json(path)
+    
+    def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
+        visited = set()
+        current = type_info
+        while current and current.get("kind") == "typedef":
+            name = current.get("name")
+            if not name:
+                break
+            if name in visited:
+                raise ValueError(f"Circular typedef: {name}")
+            visited.add(name)
+
+            td = None
+            for f in self._file_order:
+                td = self.vtypejsons[f]._raw_typedefs.get(name)
+                if td:
+                    break
+            if not td:
+                break
+            current = td
+        return current
+
+    def get_base_type(self, name: str):
+        for f in self._file_order:
+            if res := self.vtypejsons[f].get_base_type(name):
+                return res
+
+    def get_user_type(self, name: str):
+        for f in self._file_order:
+            if res := self.vtypejsons[f].get_user_type(name):
+                return res
+
+    def get_enum(self, name: str):
+        for f in self._file_order:
+            if res := self.vtypejsons[f].get_enum(name):
+                return res
+
+    def get_symbol(self, name: str):
+        for f in self._file_order:
+            res = self.vtypejsons[f].get_symbol(name)
+            if res and not (hasattr(res, "address") and res.address in [None, 0]):
+                return res
+
+    def get_type(self, name: str):
+        for f in self._file_order:
+            if res := self.vtypejsons[f].get_type(name):
+                return res
+
+    def get_symbols_by_address(self, target_address: int):
+        results = []
+        for f in self._file_order:
+            results.extend(self.vtypejsons[f].get_symbols_by_address(target_address))
+        return results
+
+    def get_type_size(self, in_type_info: dict):
+        type_info = self._resolve_type_info(in_type_info)
+        for f in self._file_order:
+            if res := self.vtypejsons[f].get_type_size(type_info):
+                return res
+
+    def _create_instance(self, type_input, buffer, instance_offset_in_buffer=0):
+        for f in self._file_order:
+            try:
+                return self.vtypejsons[f].create_instance(
+                    type_input, buffer, instance_offset_in_buffer
+                )
+            except ValueError:
+                continue
+        raise ValueError("Type definition not found in any loaded ISF.")
+
+    def shift_symbol_addresses(self, delta: int, path: str = None):
+        if path is None:
+            for f in self._file_order:
+                self.vtypejsons[f].shift_symbol_addresses(delta)
+        else:
+            self.vtypejsons[path].shift_symbol_addresses(delta)
 
     def _make_subtype_info(self, base_name: str) -> dict:
         """Helper to create ISF-compatible type_info references."""
@@ -85,19 +162,17 @@ class DFFI:
 
             # 3. Resolve Typedefs / Raw Types
             # Use the stripped 'lookup_name' for the ISF search
-            resolved_info = self._isf_group.resolve_type_info(
-                {"kind": "typedef", "name": lookup_name}
-            )
+            resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
 
             if resolved_info.get("kind") == "typedef":
-                t = self._isf_group.get_type(lookup_name)
+                t = self.get_type(lookup_name)
                 if not t:
                     raise KeyError(f"Unknown DWARF type: '{ctype}'")
                 return t
             elif resolved_info.get("kind") in ("pointer", "array"):
                 return resolved_info
             else:
-                t = self._isf_group.get_type(resolved_info["name"])
+                t = self.get_type(resolved_info["name"])
                 if not t:
                     raise KeyError(
                         f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'"
@@ -115,7 +190,7 @@ class DFFI:
             size = t._instance_type_def.size
         elif isinstance(t, dict):
             if t.get("kind") == "pointer":
-                size = self._isf_group.get_base_type("pointer").size
+                size = self.get_base_type("pointer").size
             elif t.get("kind") == "array":
                 subtype_name = t.get("subtype", {}).get("name")
                 if not subtype_name:
@@ -123,7 +198,7 @@ class DFFI:
                 elem_size = self.sizeof(subtype_name)
                 size = elem_size * t.get("count", 0)
             else:
-                size = self._isf_group.get_type_size(t)
+                size = self.get_type_size(t)
         elif hasattr(t, "size"):
             size = t.size
         else:
@@ -150,7 +225,7 @@ class DFFI:
                         return f, current_off + f.offset
                     for f in t_def.fields.values():
                         if f.anonymous:
-                            sub_t = self._isf_group.get_type(f.type_info.get("name"))
+                            sub_t = self.get_type(f.type_info.get("name"))
                             if isinstance(sub_t, VtypeUserType):
                                 res = _find_field_recursive(sub_t, name, current_off + f.offset)
                                 if res[0]:
@@ -165,7 +240,7 @@ class DFFI:
 
                 # Update current_type for nested structures
                 if field.type_info.get("kind") in ["struct", "union"]:
-                    current_type = self._isf_group.get_type(field.type_info.get("name"))
+                    current_type = self.get_type(field.type_info.get("name"))
             else:
                 raise TypeError(f"Cannot get offset of '{field_name}' inside non-struct type.")
 
@@ -190,7 +265,7 @@ class DFFI:
                         return t_def.fields[name].type_info
                     for f in t_def.fields.values():
                         if f.anonymous:
-                            sub_t = self._isf_group.get_type(f.type_info.get("name"))
+                            sub_t = self.get_type(f.type_info.get("name"))
                             if isinstance(sub_t, VtypeUserType):
                                 res = _find_type(sub_t, name)
                                 if res:
@@ -200,11 +275,11 @@ class DFFI:
                 type_info = _find_type(current_type, field_name)
                 subtype_name = type_info.get("name") if type_info else "void"
                 if type_info and type_info.get("kind") in ["struct", "union"]:
-                    current_type = self._isf_group.get_type(subtype_name)
+                    current_type = self.get_type(subtype_name)
                 else:
                     current_type = None
 
-        return Ptr(base_addr, {"name": subtype_name}, self._isf_group)
+        return Ptr(base_addr, {"name": subtype_name}, self)
 
     def _deep_init(self, instance: Any, init: Any):
         """3. Deep Struct Initialization."""
@@ -250,17 +325,15 @@ class DFFI:
             # Create a dummy struct to hold the array so BoundArrayView works flawlessly
             # without modifying the core instances engine.
             dummy_name = f"__dummy_{id(buf)}"
-            primary_isf_path = self._isf_group.paths[0]
-            self._isf_group.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
+            primary_isf_path = self._file_order[0]
+            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
                 "kind": "struct",
                 "size": size,
                 "fields": {"arr": {"offset": 0, "type": t}},
             }
-            self._isf_group.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(
-                dummy_name, None
-            )
+            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
 
-            instance = self._isf_group.create_instance(dummy_name, buf)
+            instance = self._create_instance(dummy_name, buf)
             arr_view = instance.arr
 
             if init is not None:
@@ -275,7 +348,7 @@ class DFFI:
             raise ValueError(f"Cannot allocate memory for type '{ctype}' with unknown size.")
 
         buf = bytearray(t.size)
-        instance = self._isf_group.create_instance(t, buf)
+        instance = self._create_instance(t, buf)
 
         if init is not None:
             self._deep_init(instance, init)
@@ -291,21 +364,19 @@ class DFFI:
         # Casting an integer to a pointer
         if isinstance(value, int):
             if isinstance(t, dict) and t.get("kind") == "pointer":
-                return Ptr(value, t.get("subtype"), self._isf_group)
+                return Ptr(value, t.get("subtype"), self)
 
             if hasattr(t, "size"):
                 buf = bytearray(t.size)
             else:
                 buf = bytearray(8)
-            instance = self._isf_group.create_instance(t, buf)
+            instance = self._create_instance(t, buf)
             instance[0] = value
             return instance
 
         # Re-casting an existing buffer to a new type
         if isinstance(value, BoundTypeInstance):
-            return self._isf_group.create_instance(
-                t, value._instance_buffer, value._instance_offset
-            )
+            return self._create_instance(t, value._instance_buffer, value._instance_offset)
 
         raise TypeError(f"Cannot cast {type(value)} to {ctype}")
 
@@ -323,7 +394,7 @@ class DFFI:
         if isinstance(python_buffer, bytes):
             python_buffer = bytearray(python_buffer)
 
-        return self._isf_group.create_instance(t, python_buffer)
+        return self._create_instance(t, python_buffer)
 
     def buffer(self, cdata: BoundTypeInstance, size: Optional[int] = None) -> memoryview:
         """Returns a memoryview over the underlying bytearray of the cdata."""
@@ -476,10 +547,8 @@ class DFFI:
                     raise ValueError("save_isf_to must end with '.json' or '.json.xz'")
 
             # 5) Load into this DFFI instance
-            from dwarffi.parser import isf_from_dict
-
             vtype_obj = isf_from_dict(isf_dict)
 
             pseudo_path = f"<cdef_{id(source)}>"
-            self._isf_group._file_order.append(pseudo_path)
-            self._isf_group.vtypejsons[pseudo_path] = vtype_obj
+            self._file_order.append(pseudo_path)
+            self.vtypejsons[pseudo_path] = vtype_obj
