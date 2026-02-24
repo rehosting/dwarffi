@@ -614,7 +614,11 @@ class BoundTypeInstance:
                 return True
             # Same type name and same exact byte values
             if self._instance_type_name == other._instance_type_name:
-                return self._to_bytes() == other._to_bytes()
+                size = self._instance_type_def.size
+                v1 = memoryview(self._instance_buffer)[self._instance_offset : self._instance_offset + size]
+                v2 = memoryview(other._instance_buffer)[other._instance_offset : other._instance_offset + size]
+                return v1 == v2
+
             # If both are primitive/enum types, try comparing their actual values
             if not isinstance(self._instance_type_def, VtypeUserType) and not isinstance(
                 other._instance_type_def, VtypeUserType
@@ -622,8 +626,17 @@ class BoundTypeInstance:
                 return self._get_value() == other._get_value()
             return False
 
-        # 2. Compare against native Python types (int, float, str, etc.)
-        # If this is a base type or enum, unpack its value and compare natively.
+        # 2. Compare directly against raw bytes/bytearray/memoryview
+        if isinstance(other, (bytes, bytearray, memoryview)):
+            size = self._instance_type_def.size
+            if len(other) != size:
+                return False
+            
+            # Zero-copy comparison against the byte-like object
+            v1 = memoryview(self._instance_buffer)[self._instance_offset : self._instance_offset + size]
+            return v1 == other
+
+        # 3. Compare against native Python types (int, float, str, etc.)
         if not isinstance(self._instance_type_def, VtypeUserType):
             return self._get_value() == other
 
@@ -632,7 +645,7 @@ class BoundTypeInstance:
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    def _to_bytes(self) -> bytes:
+    def __bytes__(self) -> bytes:
         size = self._instance_type_def.size
         if size == 0:
             return b""
