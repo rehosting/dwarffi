@@ -207,6 +207,10 @@ class DFFI:
         if size is None:
             raise ValueError(f"Type '{ctype}' has an unknown or undefined size.")
         return size
+ 
+    def offset(self, cdata: BoundTypeInstance) -> int:
+        """Returns the offset of the given cdata instance within its underlying buffer."""
+        return cdata._instance_offset
 
     def offsetof(self, ctype: str, *fields_or_indexes) -> int:
         t = self.typeof(ctype)
@@ -407,11 +411,7 @@ class DFFI:
         size = cdata._instance_type_def.size
         if size == 0:
             return b""
-        return cdata._to_bytes()
-    
-    def offset(self, cdata: BoundTypeInstance) -> int:
-        """Returns the offset of the given cdata instance within its underlying buffer."""
-        return cdata._instance_offset
+        return bytes(cdata)
 
     def memmove(
         self,
