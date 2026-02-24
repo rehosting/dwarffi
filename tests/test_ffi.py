@@ -263,7 +263,7 @@ def test_ffi_unpack_api(ffi_env):
     
     # Attempting to unpack a standard struct should raise a TypeError
     task = ffi_env.new("struct task_struct")
-    with pytest.raises(TypeError, match="currently requires an array view"):
+    with pytest.raises(TypeError, match="contains complex types, unions, or overlapping fields"):
         ffi_env.unpack(task, 5)
 
 def test_buffer_size_and_read_only_validation(ffi_env):
