@@ -1,7 +1,7 @@
 import json
 import struct
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI
 
 
 def test_cross_file_type_resolution(tmp_path):

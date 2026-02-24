@@ -3,7 +3,7 @@ import struct
 
 import pytest
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI
 
 
 def make_arch_isf(tmp_path, filename, base_types):

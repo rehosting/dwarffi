@@ -3,7 +3,7 @@ from unittest import mock
 
 import pytest
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI
 
 
 def mock_subprocess_run(cmd, **kwargs):

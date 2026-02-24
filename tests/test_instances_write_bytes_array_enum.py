@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import struct
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI
 
 
 def test_struct_field_write_and_to_bytes(base_types_little_endian) -> None:
