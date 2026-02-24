@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "dwarffi"
 dynamic = ["version"]
-description = "Basic Python project scaffold for dwarffi."
+description = "dwarffi is a Python library for parsing ISF files and providing an interface to access kernel symbols and types."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
@@ -16,9 +16,6 @@ dev = [
   "ruff>=0.4.0",
   "ujson>=5.11.0",
 ]
-
-[project.scripts]
-dwarffi = "dwarffi.__main__:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
