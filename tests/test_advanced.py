@@ -224,7 +224,7 @@ def test_nested_array_of_structs(adv_ffi_env):
 
 def test_nested_anonymous_complex(base_types_little_endian):
     """Tests highly nested anonymous unions/structs (common in SoC register maps)."""
-    from dwarffi.dffi import DFFI
+    from dwarffi import DFFI
     
     ffi = DFFI({
         "metadata": {},
