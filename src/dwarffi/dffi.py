@@ -15,6 +15,7 @@ from dwarffi import (
     VtypeEnum,
     VtypeJson,
     VtypeUserType,
+    VtypeSymbol,
 )
 
 
@@ -281,78 +282,100 @@ class DFFI:
         """Returns the offset of the given cdata instance within its underlying buffer."""
         return cdata._instance_offset
 
-    def offsetof(self, ctype: str, *fields_or_indexes) -> int:
+    def offsetof(self, ctype: str, *fields_or_indexes: str) -> int:
+        """
+        Returns the offset of a field (or nested field path) within a struct or union.
+        Supports recursive searching of anonymous members.
+        """
         t = self.typeof(ctype)
         if not isinstance(t, VtypeUserType):
-            raise TypeError(f"Type '{ctype}' is not a struct or union.")
+            raise TypeError(f"offsetof() requires a struct or union type, got {type(t).__name__} ('{ctype}')")
 
-        offset = 0
+        current_offset = 0
         current_type = t
 
         for field_name in fields_or_indexes:
-            if isinstance(current_type, VtypeUserType):
-                # 4. Search including anonymous fields recursively
-                def _find_field_recursive(t_def, name, current_off):
-                    if name in t_def.fields:
-                        f = t_def.fields[name]
-                        return f, current_off + f.offset
-                    for f in t_def.fields.values():
-                        if f.anonymous:
-                            sub_t = self.get_type(f.type_info.get("name"))
-                            if isinstance(sub_t, VtypeUserType):
-                                res = _find_field_recursive(sub_t, name, current_off + f.offset)
-                                if res[0]:
-                                    return res
-                    return None, None
+            if not isinstance(current_type, VtypeUserType):
+                raise TypeError(f"Cannot get offset of '{field_name}' inside non-struct type '{getattr(current_type, 'name', 'unknown')}'")
 
-                field, field_offset = _find_field_recursive(current_type, field_name, 0)
-                if not field:
-                    raise KeyError(f"Type '{current_type.name}' has no field '{field_name}'")
+            # Recursive helper to find field through anonymous members
+            def _find_field_recursive(t_def, name, accum_off):
+                # 1. Direct hit
+                if name in t_def.fields:
+                    f = t_def.fields[name]
+                    return f, accum_off + f.offset
+                
+                # 2. Search anonymous children
+                for f in t_def.fields.values():
+                    if f.anonymous:
+                        # Resolve the anonymous member's type
+                        sub_t_info = self._resolve_type_info(f.type_info)
+                        sub_t = self.get_type(sub_t_info.get("name"))
+                        
+                        if isinstance(sub_t, VtypeUserType):
+                            res_field, res_off = _find_field_recursive(sub_t, name, accum_off + f.offset)
+                            if res_field:
+                                return res_field, res_off
+                return None, None
 
-                offset += field_offset
+            field, field_offset = _find_field_recursive(current_type, field_name, 0)
+            
+            if not field:
+                raise AttributeError(f"Type '{current_type.name}' has no field named '{field_name}' (checked anonymous fields recursively)")
 
-                # Update current_type for nested structures
-                if field.type_info.get("kind") in ["struct", "union"]:
-                    current_type = self.get_type(field.type_info.get("name"))
+            current_offset += field_offset
+            
+            # Update current_type for the next segment in the path
+            next_t_info = self._resolve_type_info(field.type_info)
+            if next_t_info.get("kind") in ["struct", "union"]:
+                current_type = self.get_type(next_t_info.get("name"))
             else:
-                raise TypeError(f"Cannot get offset of '{field_name}' inside non-struct type.")
+                current_type = next_t_info
 
-        return offset
+        return current_offset
 
-    def addressof(self, cdata: BoundTypeInstance, *fields_or_indexes) -> Ptr:
+    def addressof(self, cdata: BoundTypeInstance, *fields_or_indexes: str) -> Ptr:
         """
-        Returns the offset/address of the buffer. In a rehosting context,
-        this represents the local buffer offset unless mapped via a memory backend.
+        Returns a Ptr to the given cdata or a nested field within it.
         """
         base_addr = cdata._instance_offset
-        subtype_name = cdata._instance_type_name
+        # Default to pointing to the instance's own type
+        target_type_info = cdata._instance_type_def
 
         if fields_or_indexes:
+            # 1. Calculate the absolute buffer offset using recursive offsetof
             base_addr += self.offsetof(cdata._instance_type_name, *fields_or_indexes)
-            t = self.typeof(cdata._instance_type_name)
-            current_type = t
+            
+            # 2. Resolve the final type info in the path for the Ptr object
+            current_type = cdata._instance_type_def
             for field_name in fields_or_indexes:
-
-                def _find_type(t_def, name):
+                
+                def _find_type_recursive(t_def, name):
                     if name in t_def.fields:
                         return t_def.fields[name].type_info
                     for f in t_def.fields.values():
                         if f.anonymous:
-                            sub_t = self.get_type(f.type_info.get("name"))
+                            sub_t_info = self._resolve_type_info(f.type_info)
+                            sub_t = self.get_type(sub_t_info.get("name"))
                             if isinstance(sub_t, VtypeUserType):
-                                res = _find_type(sub_t, name)
+                                res = _find_type_recursive(sub_t, name)
                                 if res:
                                     return res
                     return None
 
-                type_info = _find_type(current_type, field_name)
-                subtype_name = type_info.get("name") if type_info else "void"
-                if type_info and type_info.get("kind") in ["struct", "union"]:
-                    current_type = self.get_type(subtype_name)
+                if not isinstance(current_type, VtypeUserType):
+                    break # Should be caught by offsetof, but safety first
+                
+                field_type_info = _find_type_recursive(current_type, field_name)
+                target_type_info = self._resolve_type_info(field_type_info)
+                
+                # If nested, continue the search in the next struct
+                if target_type_info.get("kind") in ["struct", "union"]:
+                    current_type = self.get_type(target_type_info.get("name"))
                 else:
-                    current_type = None
+                    current_type = target_type_info
 
-        return Ptr(base_addr, {"name": subtype_name}, self)
+        return Ptr(base_addr, target_type_info, self)
 
     def _deep_init(self, instance: Any, init: Any):
         """3. Deep Struct Initialization."""
