@@ -692,12 +692,9 @@ class Ptr:
         self._subtype_info = subtype_info
         self._vtype_accessor = vtype_accessor
 
+
     def __repr__(self) -> str:
-        subtype_str = "void"
-        if self._subtype_info:
-            kind, name = self._subtype_info.get("kind"), self._subtype_info.get("name")
-            subtype_str = name if name else (kind if kind else "unknown")
-        return f"<Ptr ToType='{subtype_str}' Address={self.address:#x}>"
+        return f"<Ptr to {self.points_to_type_name} at {hex(self.address)}>"
 
     @property
     def points_to_type_info(self) -> Optional[Dict[str, Any]]:
@@ -707,10 +704,13 @@ class Ptr:
     def points_to_type_name(self) -> str:
         if not self._subtype_info:
             return "void"
-        name, kind = self._subtype_info.get("name"), self._subtype_info.get("kind")
-        if name:
-            return name
-        return "void" if kind == "base" and not name else (kind if kind else "unknown")
+
+        # If it's a Vtype object, use the .name attribute
+        if hasattr(self._subtype_info, "name"):
+            return self._subtype_info.name
+
+        # If it's a raw ISF dictionary, use .get()
+        return self._subtype_info.get("name", "void")
 
     # --- Type Conversions ---
     def __int__(self) -> int:
