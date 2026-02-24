@@ -54,6 +54,17 @@ class VtypeJson:
         if not isinstance(raw_data, dict):
             raise ValueError("ISF JSON root must be an object, not a list or other type.")
 
+        # Basic Schema Validation
+        required_sections = ["base_types", "user_types"]
+        missing = [s for s in required_sections if s not in raw_data]
+        if missing:
+            raise ValueError(f"ISF is missing required top-level sections: {missing}")
+
+        # Ensure all user types have a 'kind'
+        for name, definition in raw_data.get("user_types", {}).items():
+            if "kind" not in definition:
+                raise ValueError(f"User type '{name}' is missing the required 'kind' field (struct, union, etc).")
+
         # Initialize core data structures
         self.metadata: VtypeMetadata = VtypeMetadata(raw_data.get("metadata", {}))
         self._raw_base_types: Dict[str, Any] = raw_data.get("base_types", {})
