@@ -1,11 +1,8 @@
 import struct
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Union
 
+from .parser import VtypeJson
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
-
-# Prevents circular import with parser.py
-if TYPE_CHECKING:
-    from .parser import VtypeJson
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
