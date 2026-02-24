@@ -15,18 +15,57 @@ from .types import VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUs
 
 
 class VtypeJson:
-    def __init__(self, data: Dict[str, Any]):
-        self.metadata: VtypeMetadata = VtypeMetadata(data.get("metadata", {}))
-        self._raw_base_types: Dict[str, Any] = data.get("base_types", {})
+    def __init__(self, isf_input: Union[Dict[str, Any], str, io.IOBase]):
+        """
+        Intelligently initializes an ISF definition from a dictionary, 
+        a file path (str), or a file-like object.
+        """
+        raw_data: Dict[str, Any]
+
+        if isinstance(isf_input, dict):
+            raw_data = isf_input
+        elif isinstance(isf_input, str):
+            # Treat string as a file path
+            is_xz = isf_input.endswith(".xz")
+            try:
+                if is_xz:
+                    with lzma.open(isf_input, "rt", encoding="utf-8") as f:
+                        raw_data = json.load(f)
+                else:
+                    with open(isf_input, "r", encoding="utf-8") as f:
+                        raw_data = json.load(f)
+            except FileNotFoundError as e:
+                raise FileNotFoundError(f"The ISF JSON file was not found: {isf_input}") from e
+            except (IOError, OSError) as e:
+                raise ValueError(f"Could not open or read file '{isf_input}'. Error: {e}") from e
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON from file {isf_input} (using {_JSON_LIB_USED}).") from e
+            except lzma.LZMAError as e:
+                raise ValueError(f"Error decompressing XZ file {isf_input}.") from e
+        elif hasattr(isf_input, "read"):
+            # Treat as a file-like object
+            try:
+                raw_data = json.load(isf_input)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Error decoding JSON from file-like object (using {_JSON_LIB_USED}).") from e
+        else:
+            raise TypeError(f"Input must be a dict, file path (str), or file-like object. Got {type(isf_input)}.")
+
+        if not isinstance(raw_data, dict):
+            raise ValueError("ISF JSON root must be an object, not a list or other type.")
+
+        # Initialize core data structures
+        self.metadata: VtypeMetadata = VtypeMetadata(raw_data.get("metadata", {}))
+        self._raw_base_types: Dict[str, Any] = raw_data.get("base_types", {})
         self._parsed_base_types_cache: Dict[str, VtypeBaseType] = {}
-        self._raw_user_types: Dict[str, Any] = data.get("user_types", {})
+        self._raw_user_types: Dict[str, Any] = raw_data.get("user_types", {})
         self._parsed_user_types_cache: Dict[str, VtypeUserType] = {}
-        self._raw_enums: Dict[str, Any] = data.get("enums", {})
+        self._raw_enums: Dict[str, Any] = raw_data.get("enums", {})
         self._parsed_enums_cache: Dict[str, VtypeEnum] = {}
-        self._raw_symbols: Dict[str, Any] = data.get("symbols", {})
+        self._raw_symbols: Dict[str, Any] = raw_data.get("symbols", {})
         self._parsed_symbols_cache: Dict[str, VtypeSymbol] = {}
         self._address_to_symbol_list_cache: Optional[Dict[int, List[VtypeSymbol]]] = None
-        self._raw_typedefs: Dict[str, Any] = data.get("typedefs", {})
+        self._raw_typedefs: Dict[str, Any] = raw_data.get("typedefs", {})
 
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
         """Unrolls typedefs into their underlying target type info."""
@@ -160,48 +199,3 @@ class VtypeJson:
             f"<VtypeJson RawBaseTypes={len(self._raw_base_types)} RawUserTypes={len(self._raw_user_types)} "
             f"RawEnums={len(self._raw_enums)} RawSymbols={len(self._raw_symbols)} (Lazy Loaded)>"
         )
-
-
-def load_isf_json(json_input: Union[str, object]) -> VtypeJson:
-    raw_data: Any
-    input_is_path_str = isinstance(json_input, str)
-    if input_is_path_str:
-        path_str = str(json_input)
-        is_xz = path_str.endswith(".xz")
-        try:
-            if is_xz:
-                with lzma.open(path_str, "rt", encoding="utf-8") as f:
-                    raw_data = json.load(f)
-            else:
-                with open(path_str, "r", encoding="utf-8") as f:
-                    raw_data = json.load(f)
-        except FileNotFoundError as e:
-            raise FileNotFoundError(f"The ISF JSON file was not found: {path_str}") from e
-        except (IOError, OSError) as e:
-            raise ValueError(f"Could not open or read file '{path_str}'. Error: {e}") from e
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"Error decoding JSON from file {path_str} (using {_JSON_LIB_USED})."
-            ) from e
-        except lzma.LZMAError as e:
-            raise ValueError(f"Error decompressing XZ file {path_str}.") from e
-    elif hasattr(json_input, "read"):
-        try:
-            raw_data = json.load(json_input)
-        except json.JSONDecodeError as e:
-            raise ValueError(
-                f"Error decoding JSON from file-like object (using {_JSON_LIB_USED})."
-            ) from e
-    else:
-        raise TypeError(
-            f"Input must be a JSON string (path or content), or a file-like object. Got {type(json_input)}."
-        )
-
-    if not isinstance(raw_data, dict):
-        raise ValueError("ISF JSON root must be an object, not a list or other type.")
-    return VtypeJson(raw_data)
-
-
-def isf_from_dict(isf_dict: dict[str, Any]) -> VtypeJson:
-    f = io.StringIO(json.dumps(isf_dict))
-    return load_isf_json(f)
