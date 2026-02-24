@@ -4,7 +4,9 @@ try:
 except Exception:
     __version__ = "0+unknown"
 
-from .core import *  # noqa: F403
+from .instances import BoundArrayView, BoundTypeInstance, Ptr, EnumInstance
+from .types import VtypeBaseType, VtypeStructField, VtypeUserType, VtypeEnum, VtypeSymbol
+from .parser import VtypeJson
 from .dffi import DFFI
 
-__all__ = ["__version__", "DFFI"]
+__all__ = ["__version__", "DFFI", "VtypeJson", "BoundArrayView", "BoundTypeInstance", "Ptr", "EnumInstance", "VtypeBaseType", "VtypeStructField", "VtypeUserType", "VtypeEnum", "VtypeSymbol"]
