@@ -306,3 +306,29 @@ def test_dynamic_array_of_pointers(ffi_env):
     assert isinstance(p, Ptr)
     assert p.address == 0xDEADBEEF
     assert p.points_to_type_name == "int"
+
+
+def test_buffer_sharing_and_offsets(ffi_env):
+    """Verifies that multiple instances sharing a buffer correctly reflect updates."""
+    shared_buf = bytearray(32)
+    
+    # Create two task_structs in the same buffer at different offsets
+    task1 = ffi_env.from_buffer("struct task_struct", shared_buf, offset=0)
+    task2 = ffi_env.from_buffer("struct task_struct", shared_buf, offset=16)
+    
+    task1.pid = 101
+    task2.pid = 202
+    
+    # Verify bytes in the shared buffer
+    assert struct.unpack_from("<i", shared_buf, 0)[0] == 101
+    assert struct.unpack_from("<i", shared_buf, 16)[0] == 202
+    
+    # Create a pointer to the middle of the buffer and cast it
+    # This simulates pointer-based navigation in rehosting
+    task2_rebound = ffi_env.cast("struct task_struct", task1) # Casting task1
+    # Move the offset manually for a new view
+    task2_manual = ffi_env.from_buffer("struct task_struct", shared_buf, offset=16)
+    
+    assert task2_manual.pid == 202
+    task2_manual.pid = 303
+    assert task2.pid == 303

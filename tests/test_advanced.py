@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from dwarffi.dffi import DFFI
+from dwarffi import DFFI, BoundTypeInstance
 
 
 @pytest.fixture
@@ -326,3 +326,21 @@ def test_function_pointer_repr(adv_ffi_env):
     assert isinstance(func_repr, str)
     assert "FunctionType" in func_repr
     assert "click_handler_fn" in func_repr
+
+def test_unpack_struct_array(adv_ffi_env):
+    """Verifies that unpack() returns a list of bound instances for struct arrays."""
+    # Create an array of 3 inner_structs (each is 4 bytes)
+    arr = adv_ffi_env.new("inner_struct[3]", [{"val": 10}, {"val": 20}, {"val": 30}])
+    
+    # Unpack into Python list
+    unpacked = adv_ffi_env.unpack(arr, 3)
+    
+    assert len(unpacked) == 3
+    assert all(isinstance(item, BoundTypeInstance) for item in unpacked)
+    assert unpacked[0].val == 10
+    assert unpacked[1].val == 20
+    assert unpacked[2].val == 30
+    
+    # Verify that modifying an unpacked item affects the original buffer
+    unpacked[1].val = 99
+    assert arr[1].val == 99

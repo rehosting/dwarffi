@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dwarffi.core import VtypeJson
+from dwarffi import VtypeJson
 
 
 def test_get_type_prefixes(base_types_little_endian) -> None:
