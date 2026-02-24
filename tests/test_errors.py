@@ -1,6 +1,8 @@
+
 import pytest
-import struct
+
 from dwarffi import DFFI
+
 
 def test_error_missing_pointer_definition():
     """Ensures a clear error when 'pointer' base type is missing but needed."""

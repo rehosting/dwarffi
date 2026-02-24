@@ -344,3 +344,51 @@ def test_unpack_struct_array(adv_ffi_env):
     # Verify that modifying an unpacked item affects the original buffer
     unpacked[1].val = 99
     assert arr[1].val == 99
+
+def test_deep_anonymous_nesting_access(adv_ffi_env):
+    """Navigates through a triple-nested anonymous structure."""
+    # struct { union { struct { union { int target; } } } }
+    deep_isf = {
+        "metadata": {},
+        "base_types": {"int": {"kind": "int", "size": 4, "signed": True, "endian": "little"}},
+        "user_types": {
+            "deep": {
+                "kind": "struct", "size": 4,
+                "fields": {
+                    "u1": {"offset": 0, "anonymous": True, "type": {"kind": "union", "name": "layer1"}}
+                }
+            },
+            "layer1": {
+                "kind": "union", "size": 4,
+                "fields": {
+                    "s2": {"offset": 0, "anonymous": True, "type": {"kind": "struct", "name": "layer2"}}
+                }
+            },
+            "layer2": {
+                "kind": "struct", "size": 4,
+                "fields": {
+                    "u3": {"offset": 0, "anonymous": True, "type": {"kind": "union", "name": "layer3"}}
+                }
+            },
+            "layer3": {
+                "kind": "union", "size": 4,
+                "fields": {
+                    "target": {"offset": 0, "type": {"kind": "base", "name": "int"}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}
+    }
+    adv_ffi_env.load_isf(deep_isf)
+    
+    # 1. Test offsetof through the maze
+    off = adv_ffi_env.offsetof("struct deep", "target")
+    assert off == 0
+    
+    # 2. Test addressof type resolution
+    inst = adv_ffi_env.new("struct deep", {"target": 0x1337})
+    ptr = adv_ffi_env.addressof(inst, "target")
+    assert ptr.points_to_type_name == "int"
+    
+    # 3. Test direct attribute access
+    assert inst.target == 0x1337
