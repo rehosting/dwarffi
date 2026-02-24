@@ -78,6 +78,12 @@ class BoundArrayView:
             start, stop, step = index.indices(self._array_count)
             return [self[i] for i in range(start, stop, step)]
 
+        if not isinstance(index, int):
+            raise TypeError(f"Array indices must be integers or slices, not {type(index).__name__}")
+
+        if index < 0 or index >= self._array_count:
+            raise IndexError(f"Index {index} is out of bounds for array of size {self._array_count}")
+
         element_offset = self._get_element_offset_in_parent_struct(index)
         return self._parent_instance._read_data(
             self._array_subtype_info, element_offset, f"{self._array_field_name}[{index}]"
