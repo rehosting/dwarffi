@@ -15,9 +15,25 @@ from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
 
 class DFFI:
-    def __init__(self, isf_input: Optional[Union[str, dict, list]] = None):
-        self._file_order = []
-        self.vtypejsons = {}
+    """
+    DWARFFI (DFFI) Engine.
+
+    Provides a high-performance, CFFI-like interface for interacting with
+    binary data and memory using DWARF-derived Intermediate Structure Format (ISF) files.
+    """
+
+    def __init__(self, isf_input: Optional[Union[str, dict, List[Union[str, dict]]]] = None):
+        """
+        Initializes the DFFI engine.
+
+        Args:
+            isf_input: A file path (str), a dictionary (dict), or a list of paths/dicts
+                       containing parsed ISF data. Evaluated in order of provision.
+        """
+        self._file_order: List[str] = []
+        self.vtypejsons: Dict[str, VtypeJson] = {}
+        
+        # Safely bound LRU cache tied to the instance lifecycle to prevent memory leaks
         self._parse_ctype_string = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
 
         if isf_input is not None:
@@ -27,9 +43,12 @@ class DFFI:
             else:
                 self.load_isf(isf_input)
 
-    def load_isf(self, isf_input: Union[str, dict]):
+    def load_isf(self, isf_input: Union[str, dict]) -> None:
         """
         Loads a singular ISF definition from a file path or a direct dictionary.
+
+        Args:
+            isf_input: A string path to an ISF file (.json or .json.xz) or a loaded ISF dictionary.
         """
         if isinstance(isf_input, dict):
             # Generate a unique pseudo-path for the dictionary entry
@@ -45,6 +64,7 @@ class DFFI:
             raise TypeError("load_isf expects a file path (str) or a dictionary (dict)")
     
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolves typedefs to their underlying concrete types."""
         visited = set()
         current = type_info
         while current and current.get("kind") == "typedef":
@@ -65,61 +85,82 @@ class DFFI:
             current = td
         return current
 
-    def get_base_type(self, name: str):
+    def get_base_type(self, name: str) -> Optional[VtypeBaseType]:
+        """Finds a base type (e.g., 'int', 'char') across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_base_type(name):
                 return res
+        return None
 
-    def get_user_type(self, name: str):
+    def get_user_type(self, name: str) -> Optional[VtypeUserType]:
+        """Finds a user-defined struct or union across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_user_type(name):
                 return res
+        return None
 
-    def get_enum(self, name: str):
+    def get_enum(self, name: str) -> Optional[VtypeEnum]:
+        """Finds an enumeration across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_enum(name):
                 return res
+        return None
 
-    def get_symbol(self, name: str):
+    def get_symbol(self, name: str) -> Optional[Any]:
         """
         Searches all loaded ISF files for the given symbol name.
-        Returns the first valid VtypeSymbol found.
+        
+        Args:
+            name: The symbol name to find.
+            
+        Returns:
+            The first valid VtypeSymbol found, or None.
         """
-        for path in self.paths:
+        for path in self._file_order:
             sym = self.vtypejsons[path].get_symbol(name)
             if sym:
-                # If a symbol has no address and no type info, skip it 
-                # and see if another ISF has a more complete definition
-                if (not hasattr(sym, 'address') or sym.address in [None, 0]) and not sym.type_info:
+                # Skip incomplete symbol definitions if they lack both address and type
+                if (not hasattr(sym, 'address') or sym.address in [None, 0]) and not getattr(sym, 'type_info', None):
                     continue
                 return sym
         return None
     
     def get_function_address(self, function: str) -> Optional[int]:
         """
-        Get the address of a kernel function.
+        Gets the memory address of a kernel or executable function.
+        
+        Args:
+            function: The function name.
+            
+        Returns:
+            The address as an integer, or None if not found.
         """
-        sym = self.ffi.get_symbol(function)
-        if sym and sym.address:
+        sym = self.get_symbol(function)
+        if sym and getattr(sym, 'address', None):
             return sym.address
         return None
 
-    def get_type(self, name: str):
+    def get_type(self, name: str) -> Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]]:
+        """General lookup for any type by name."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type(name):
                 return res
+        return None
 
-    def get_symbols_by_address(self, target_address: int):
+    def get_symbols_by_address(self, target_address: int) -> List[Any]:
+        """Finds all symbols located at a specific memory address."""
         results = []
         for f in self._file_order:
             results.extend(self.vtypejsons[f].get_symbols_by_address(target_address))
         return results
 
-    def get_type_size(self, in_type_info: dict):
+    def get_type_size(self, in_type_info: dict) -> int:
+        """Calculates the byte size of a raw ISF type dictionary."""
         type_info = self._resolve_type_info(in_type_info)
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type_size(type_info):
                 return res
+        return 0
     
     def _create_instance(
         self,
@@ -128,8 +169,8 @@ class DFFI:
         instance_offset_in_buffer: int = 0,
     ) -> BoundTypeInstance:
         """
-        Creates a BoundTypeInstance by resolving the type across all loaded ISFs
-        and binding it to the provided buffer.
+        Internal factory: Creates a BoundTypeInstance by resolving the type across 
+        all loaded ISFs and binding it to the provided buffer.
         """
         if isinstance(buffer, bytes):
             processed_buffer = bytearray(buffer)
@@ -168,7 +209,14 @@ class DFFI:
             type_name, type_def, processed_buffer, self, instance_offset_in_buffer
         )
 
-    def shift_symbol_addresses(self, delta: int, path: str = None):
+    def shift_symbol_addresses(self, delta: int, path: Optional[str] = None) -> None:
+        """
+        Shifts the memory addresses of all symbols by a specific delta (useful for ASLR or module loading).
+        
+        Args:
+            delta: The integer offset to add to all symbol addresses.
+            path: If specified, only shifts symbols within the targeted ISF path/dict.
+        """
         if path is None:
             for f in self._file_order:
                 self.vtypejsons[f].shift_symbol_addresses(delta)
@@ -188,7 +236,8 @@ class DFFI:
             return {"kind": "enum", "name": base_t.name}
         return {"name": base_name}
     
-    def _parse_ctype_string_impl(self, ctype: str) -> str:
+    def _parse_ctype_string_impl(self, ctype: str) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
+        """Internal uncached parser for C-style strings."""
         # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
         # but keep a copy for the regex parsers
         lookup_name = ctype
@@ -233,6 +282,15 @@ class DFFI:
     def typeof(
         self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView]
     ) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
+        """
+        Resolves a type definition from a string or extracts it from an existing instance.
+
+        Args:
+            ctype: A C-style string (e.g., "int *", "struct task_struct"), or an existing DFFI instance.
+            
+        Returns:
+            The resolved Type Definition object or ISF type dictionary.
+        """
         if isinstance(ctype, BoundTypeInstance):
             return ctype._instance_type_def
         if isinstance(ctype, Ptr):
@@ -252,7 +310,13 @@ class DFFI:
 
     def sizeof(self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView, Any]) -> int:
         """
-        Returns the size in bytes of the given type or instance.
+        Calculates the memory size in bytes of the given type or instance.
+        
+        Args:
+            ctype: The type name, string, or bound instance.
+            
+        Returns:
+            The size in bytes as an integer.
         """
         if isinstance(ctype, (str, Ptr, BoundArrayView)):
             t = self.typeof(ctype)
@@ -287,12 +351,21 @@ class DFFI:
         return size
  
     def offset(self, cdata: BoundTypeInstance) -> int:
-        """Returns the offset of the given cdata instance within its underlying buffer."""
+        """
+        Returns the absolute offset of the given instance within its underlying host buffer.
+        """
         return cdata._instance_offset
 
     def offsetof(self, ctype: str, *fields_or_indexes: str) -> int:
         """
-        Returns the offset of a field (or nested field path) within a struct or union.
+        Calculates the byte offset of a specific field (or nested path) within a struct/union.
+
+        Args:
+            ctype: The name of the root struct or union.
+            *fields_or_indexes: A sequence of field names tracking deep into the struct.
+
+        Returns:
+            The byte offset from the start of the struct.
         """
         t = self.typeof(ctype)
         if not isinstance(t, VtypeUserType):
@@ -325,7 +398,14 @@ class DFFI:
 
     def addressof(self, cdata: BoundTypeInstance, *fields_or_indexes: str) -> Ptr:
         """
-        Returns a Ptr to the given cdata or a nested field within it.
+        Returns a DFFI Pointer to the given instance, or to a specific nested field within it.
+        
+        Args:
+            cdata: The bound instance to point to.
+            *fields_or_indexes: Optional field names to point deep inside the cdata struct.
+            
+        Returns:
+            A `Ptr` object representing the memory address.
         """
         base_addr = cdata._instance_offset
         target_type_info = cdata._instance_type_def
@@ -355,8 +435,8 @@ class DFFI:
 
         return Ptr(base_addr, target_type_info, self)
 
-    def _deep_init(self, instance: Any, init: Any):
-        """3. Deep Struct Initialization."""
+    def _deep_init(self, instance: Any, init: Any) -> None:
+        """Recursively initializes complex struct/array instances using standard python lists/dicts."""
         if isinstance(init, dict) and isinstance(instance, BoundTypeInstance):
             for k, v in init.items():
                 if hasattr(instance, k):
@@ -379,6 +459,16 @@ class DFFI:
             instance[0] = init
 
     def new(self, ctype: str, init: Any = None) -> Union[BoundTypeInstance, BoundArrayView]:
+        """
+        Allocates a new memory buffer for the specified type and binds it.
+
+        Args:
+            ctype: The C-type string (e.g. 'int', 'struct my_struct', 'char[10]').
+            init: Optional initial data (dict, list, string, or bytes) to populate the struct/array.
+
+        Returns:
+            The bound, ready-to-use Type Instance or Array View.
+        """
         t = self.typeof(ctype)
 
         # 2. Handle dynamic arrays natively
@@ -431,7 +521,14 @@ class DFFI:
 
     def cast(self, ctype: str, value: Any) -> Union[BoundTypeInstance, Ptr, BoundArrayView]:
         """
-        Interpret 'value' as the specified C type.
+        Interprets an integer address or existing CData as a new type.
+
+        Args:
+            ctype: The target C-type to cast into.
+            value: The integer memory address, or existing BoundTypeInstance to re-cast.
+            
+        Returns:
+            The newly typed BoundTypeInstance or Ptr.
         """
         t = self.typeof(ctype)
 
@@ -467,6 +564,18 @@ class DFFI:
         offset: int = 0,
         require_writable: bool = False,
     ) -> Union[BoundTypeInstance, BoundArrayView]:
+        """
+        Creates a new DFFI instance bound directly to an existing Python memory buffer.
+
+        Args:
+            ctype: The C-type to interpret the buffer as.
+            python_buffer: The host memory (bytearray, bytes, or memoryview).
+            offset: The byte offset within the buffer to begin the binding.
+            require_writable: If True, raises an error if the host buffer is read-only bytes.
+            
+        Returns:
+            The BoundTypeInstance mapped exactly over the host memory.
+        """
         if require_writable and isinstance(python_buffer, bytes):
             raise TypeError("Buffer is read-only")
 
@@ -509,7 +618,14 @@ class DFFI:
 
     def buffer(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], size: int = -1) -> memoryview:
         """
-        Returns a zero-copy memoryview of the underlying buffer.
+        High-performance extraction: Returns a zero-copy memoryview of the underlying buffer.
+
+        Args:
+            cdata: The bound instance to extract memory from.
+            size: The number of bytes to capture. Defaults to the C-type's native size.
+            
+        Returns:
+            A python `memoryview` window.
         """
         if isinstance(cdata, Ptr):
             # A pointer doesn't own memory, it just points. 
@@ -531,19 +647,28 @@ class DFFI:
         return memoryview(buf)[offset : offset + size]
 
     def to_bytes(self, cdata: BoundTypeInstance) -> bytes:
-        """Returns the underlying bytes of the given cdata instance."""
+        """
+        Returns an immutable byte snapshot of the given instance's memory.
+        """
         size = cdata._instance_type_def.size
         if size == 0:
             return b""
-        return bytes(cdata)
+        return bytes(self.buffer(cdata, size))
 
     def memmove(
         self,
         dest: Union[BoundTypeInstance, bytearray],
         src: Union[BoundTypeInstance, bytearray, bytes],
         n: int,
-    ):
-        """Copy n bytes from src to dest."""
+    ) -> None:
+        """
+        Copies memory natively between instances or buffers.
+        
+        Args:
+            dest: Destination buffer or bound instance.
+            src: Source buffer or bound instance.
+            n: Number of bytes to copy.
+        """
         dest_buf = dest._instance_buffer if isinstance(dest, BoundTypeInstance) else dest
         dest_off = dest._instance_offset if isinstance(dest, BoundTypeInstance) else 0
 
@@ -554,7 +679,7 @@ class DFFI:
 
     def string(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = -1) -> bytes:
         """
-        Reads a null-terminated string from memory, or exactly maxlen bytes.
+        Zero-copy reads a null-terminated string from memory, or exactly maxlen bytes.
         """
         if isinstance(cdata, Ptr):
             raise TypeError("Cannot read string directly from a Ptr.")
@@ -581,9 +706,15 @@ class DFFI:
 
     def unpack(self, cdata: Union[BoundArrayView, BoundTypeInstance], count: int = -1) -> Union[list, tuple]:
         """
-        Unpacks an array into a Python list, or a fully primitive struct into a tuple.
+        Fast-Path API: Dumps a fully primitive struct or array out to Python in a single C operation.
+
+        Args:
+            cdata: The array or struct instance to unpack.
+            count: Number of elements (for arrays).
+            
+        Returns:
+            A list (for arrays) or tuple (for structs) of extracted values.
         """
-        # 1. Array Unpacking (Fast path for primitive arrays)
         if isinstance(cdata, BoundArrayView):
             if count == -1:
                 count = cdata._array_count
@@ -625,16 +756,17 @@ class DFFI:
         compiler_flags: Optional[List[str]] = None,
         dwarf2json_cmd: str = "dwarf2json",
         save_isf_to: Optional[str] = None,
-    ):
+    ) -> None:
         """
-        Compile C code on the fly, extract DWARF info via dwarf2json,
-        and load the resulting types into this DFFI instance.
+        Compiles C code on the fly, extracts DWARF info via dwarf2json,
+        and heavily loads the resulting types dynamically into this DFFI instance.
 
-        :param source: The raw C code string to compile.
-        :param compiler: The compiler executable (e.g., 'gcc', 'clang', 'arm-none-eabi-gcc').
-        :param compiler_flags: List of flags to pass to the compiler. Defaults to ['-O0', '-g', '-gdwarf-4', '-fno-eliminate-unused-debug-types', '-c'].
-        :param dwarf2json_cmd: The name or path of the dwarf2json executable.
-        :param save_isf_to: Optional file path to save the generated ISF (supports .json and .json.xz).
+        Args:
+            source: The raw C code string to compile.
+            compiler: The compiler executable.
+            compiler_flags: List of flags to pass to the compiler.
+            dwarf2json_cmd: Path to the dwarf2json executable.
+            save_isf_to: Optional file path to cache the generated ISF.
         """
         if not shutil.which(dwarf2json_cmd):
             raise RuntimeError(
