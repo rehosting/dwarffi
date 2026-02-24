@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from typing import Any, Dict, List, Optional, Union
+import struct
 from functools import lru_cache
 
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
@@ -570,15 +571,30 @@ class DFFI:
         """
         Unpacks an array into a Python list, or a fully primitive struct into a tuple.
         """
-        # 1. Array Unpacking (Existing Logic)
+        # 1. Array Unpacking (Fast path for primitive arrays)
         if isinstance(cdata, BoundArrayView):
             if count == -1:
                 count = cdata._array_count
             else:
                 count = min(count, cdata._array_count)
+            # Check if we can fast-path unpack the array using struct
+            # We can do this if the array's subtype is a simple base type
+            t_info = self._resolve_type_info(cdata._array_subtype_info)
+            if t_info.get("kind") == "base":
+                base_type = self.get_base_type(t_info.get("name"))
+                if base_type:
+                    base_struct = base_type.get_compiled_struct()
+                    if base_struct:
+                        # Build a multiplier format string, e.g., "<1000I"
+                        fmt = f"{base_struct.format[0]}{count}{base_struct.format[1:]}"
+                        buf = cdata._parent_instance._instance_buffer
+                        offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
+                        return list(struct.unpack_from(fmt, buf, offset))
+            
+            # Fallback: Array of structs or complex types
             return [cdata[i] for i in range(count)]
             
-        # 2. Bulk Struct Unpacking (New Fast Path)
+        # 2. Bulk Struct Unpacking (Fast Path)
         if isinstance(cdata, BoundTypeInstance) and isinstance(cdata._instance_type_def, VtypeUserType):
             agg_struct = cdata._instance_type_def.get_aggregated_struct(self)
             if not agg_struct:
