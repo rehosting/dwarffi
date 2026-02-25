@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
-from .types import VtypeBaseType, VtypeEnum, VtypeUserType, VtypeSymbol
+from .types import VtypeBaseType, VtypeEnum, VtypeSymbol, VtypeUserType
 
 
 class DFFI:
