@@ -428,7 +428,19 @@ class VtypeSymbol:
 
     def pretty_print(self) -> str:
         addr_str = f"{self.address:#x}" if self.address is not None else "N/A"
-        type_str = f"{self.type_info.get('kind', '')} {self.type_info.get('name', '')}".strip() if self.type_info else "unknown"
+        
+        if self.type_info:
+            kind = self.type_info.get('kind', '')
+            name = self.type_info.get('name', '')
+            
+            # Arrays and pointers nest their target type name under 'subtype'
+            if not name and 'subtype' in self.type_info:
+                name = self.type_info['subtype'].get('name', '')
+                
+            type_str = f"{kind} {name}".strip()
+        else:
+            type_str = "unknown"
+            
         return f"Symbol {self.name} @ {addr_str} (Type: {type_str})"
 
     def __str__(self) -> str:
