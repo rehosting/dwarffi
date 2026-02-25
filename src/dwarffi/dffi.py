@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, Union
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
-from .types import VtypeBaseType, VtypeEnum, VtypeUserType
+from .types import VtypeBaseType, VtypeEnum, VtypeUserType, VtypeSymbol
 
 
 class DFFI:
@@ -163,7 +163,7 @@ class DFFI:
                 return res
         return None
 
-    def get_symbol(self, name: str) -> Optional[Any]:
+    def get_symbol(self, name: str) -> Optional[VtypeSymbol]:
         """
         Searches all loaded ISF files for the given symbol name.
         
