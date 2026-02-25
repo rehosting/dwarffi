@@ -313,6 +313,40 @@ class VtypeUserType:
     def __repr__(self) -> str:
         return f"<VtypeUserType Name='{self.name}' Kind='{self.kind}' Size={self.size} Fields={len(self.fields)}>"
 
+    @property
+    def members(self) -> Dict[str, VtypeStructField]:
+        """Alias for fields, providing a semantic dictionary of struct/union members."""
+        return self.fields
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Returns a raw dictionary representation of the type's structure."""
+        return {
+            "name": self.name,
+            "kind": self.kind,
+            "size": self.size,
+            "fields": {k: {"offset": v.offset, "type": v.type_info, "anonymous": v.anonymous} 
+                       for k, v in self.fields.items()}
+        }
+
+    def pretty_print(self) -> str:
+        """Returns a C-like formatted string of the struct/union layout."""
+        lines = [f"{self.kind} {self.name} (size: {self.size} bytes) {{"]
+        # Sort fields by offset for a true layout view
+        for f_name, f_def in sorted(self.fields.items(), key=lambda x: x[1].offset):
+            t_kind = f_def.type_info.get("kind", "unknown")
+            t_name = f_def.type_info.get("name", "")
+            type_desc = f"{t_kind} {t_name}".strip()
+            
+            if f_def.anonymous:
+                lines.append(f"  [+{f_def.offset:<3}] <anonymous> {type_desc};")
+            else:
+                lines.append(f"  [+{f_def.offset:<3}] {type_desc} {f_name};")
+        lines.append("}")
+        return "\n".join(lines)
+    
+    def __str__(self) -> str:
+        return self.pretty_print()
+
 
 class VtypeEnum:
     """Represents a C enumeration and its constant mappings."""
@@ -334,6 +368,30 @@ class VtypeEnum:
 
     def __repr__(self) -> str:
         return f"<VtypeEnum Name='{self.name}' Size={self.size} Base='{self.base}' Constants={len(self.constants)}>"
+    
+    @property
+    def members(self) -> Dict[str, int]:
+        """Alias for constants, providing a semantic dictionary of enum members."""
+        return self.constants
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "size": self.size,
+            "base": self.base,
+            "constants": self.constants
+        }
+
+    def pretty_print(self) -> str:
+        """Returns a C-like formatted string of the enum layout."""
+        lines = [f"enum {self.name} (size: {self.size}, base: {self.base}) {{"]
+        for name, val in sorted(self.constants.items(), key=lambda x: x[1]):
+            lines.append(f"  {name} = {val},")
+        lines.append("}")
+        return "\n".join(lines)
+        
+    def __str__(self) -> str:
+        return self.pretty_print()
 
 
 class VtypeSymbol:
@@ -360,3 +418,18 @@ class VtypeSymbol:
         type_kind = self.type_info.get("kind", "N/A") if self.type_info else "N/A"
         addr = f"{self.address:#x}" if self.address is not None else "N/A"
         return f"<VtypeSymbol Name='{self.name}' Address={addr} TypeKind='{type_kind}'>"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "address": self.address,
+            "type_info": self.type_info
+        }
+
+    def pretty_print(self) -> str:
+        addr_str = f"{self.address:#x}" if self.address is not None else "N/A"
+        type_str = f"{self.type_info.get('kind', '')} {self.type_info.get('name', '')}".strip() if self.type_info else "unknown"
+        return f"Symbol {self.name} @ {addr_str} (Type: {type_str})"
+
+    def __str__(self) -> str:
+        return self.pretty_print()
