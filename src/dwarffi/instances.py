@@ -1,4 +1,5 @@
 import struct
+import difflib
 from typing import Any, Dict, Iterator, Optional, Tuple, Union
 
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
@@ -622,7 +623,14 @@ class BoundTypeInstance:
 
             flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
             if name not in flat_fields:
-                raise AttributeError(f"'{self._instance_type_name}' has no attribute '{name}'")
+                error_msg = f"'{self._instance_type_name}' has no attribute '{name}'"
+                
+                # Smart error suggestion
+                matches = difflib.get_close_matches(name, flat_fields.keys(), n=1, cutoff=0.6)
+                if matches:
+                    error_msg += f". Did you mean '{matches[0]}'?"
+                    
+                raise AttributeError(error_msg)
 
             field_def, field_offset = flat_fields[name]
 
