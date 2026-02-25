@@ -1,5 +1,5 @@
-import pytest
 from dwarffi import DFFI
+
 
 def test_exotic_integer_sizes():
     """

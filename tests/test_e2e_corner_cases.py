@@ -1,5 +1,5 @@
 import shutil
-import struct
+
 import pytest
 
 from dwarffi import DFFI
