@@ -10,6 +10,7 @@ import tempfile
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Union
 
+from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
@@ -23,7 +24,11 @@ class DFFI:
     binary data and memory using DWARF-derived Intermediate Structure Format (ISF) files.
     """
 
-    def __init__(self, isf_input: Optional[Union[str, dict, List[Union[str, dict]]]] = None):
+    def __init__(
+        self, 
+        isf_input: Optional[Union[str, dict, List[Union[str, dict]]]] = None,
+        backend: Optional[Union[MemoryBackend, bytes, bytearray]] = None
+    ):
         """
         Initializes the DFFI engine.
 
@@ -33,6 +38,12 @@ class DFFI:
         """
         self._file_order: List[str] = []
         self.vtypejsons: Dict[str, VtypeJson] = {}
+
+        # Configure the backend natively
+        if isinstance(backend, (bytes, bytearray)):
+            self.backend = BytesBackend(backend)
+        else:
+            self.backend = backend
         
         # Safely bound LRU cache tied to the instance lifecycle to prevent memory leaks
         self._parse_ctype_string = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
@@ -220,10 +231,10 @@ class DFFI:
         """
         if isinstance(buffer, bytes):
             processed_buffer = bytearray(buffer)
-        elif isinstance(buffer, (bytearray, memoryview)):
+        elif isinstance(buffer, (bytearray, memoryview)) or hasattr(buffer, "__getitem__"):
             processed_buffer = buffer
         else:
-            raise TypeError("Input buffer must be bytes, bytearray, or memoryview.")
+            raise TypeError("Input buffer must be bytes, bytearray, memoryview, or support __getitem__.")
 
         if isinstance(type_input, str):
             type_name = type_input
@@ -241,8 +252,8 @@ class DFFI:
             if not (type_kind == "void" and getattr(type_def, "size", None) == 0):
                 raise ValueError(f"Type definition for '{type_name}' lacks a valid size.")
 
-        # Bounds checking
-        if type_def.size is not None:
+        # Bounds checking (skip if using a duck-typed backend proxy)
+        if type_def.size is not None and not hasattr(processed_buffer, "backend"):
             effective_len = len(processed_buffer) - instance_offset_in_buffer
             if type_def.size > effective_len:
                 raise ValueError(
@@ -326,7 +337,7 @@ class DFFI:
             return t
 
     def typeof(
-        self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView]
+        self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView, Dict]
     ) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
         """
         Resolves a type definition from a string or extracts it from an existing instance.
@@ -337,6 +348,8 @@ class DFFI:
         Returns:
             The resolved Type Definition object or ISF type dictionary.
         """
+        if isinstance(ctype, dict):
+            return ctype
         if isinstance(ctype, BoundTypeInstance):
             return ctype._instance_type_def
         if isinstance(ctype, Ptr):
@@ -602,6 +615,58 @@ class DFFI:
             )
 
         raise TypeError(f"Cannot cast {type(value)} to {ctype}")
+    
+    def from_address(
+        self,
+        ctype: Union[str, "VtypeUserType", "VtypeBaseType", "VtypeEnum", Dict],
+        address: int
+    ) -> Union["BoundTypeInstance", "BoundArrayView", "Ptr"]:
+        """
+        Creates a new DFFI instance bound to an absolute address in the configured MemoryBackend.
+        Operates on LIVE memory via the LiveMemoryProxy.
+        """
+        if self.backend is None:
+            raise RuntimeError("Cannot use from_address(): No memory backend was configured.")
+
+        t = self.typeof(ctype)
+
+        if isinstance(t, dict) and t.get("kind") == "pointer":
+            return Ptr(address, t.get("subtype"), self)
+
+        # Wrap the backend in our magic slicing proxy
+        proxy = LiveMemoryProxy(self.backend)
+
+        if isinstance(t, dict) and t.get("kind") == "array":
+            elem_size = self.sizeof(t.get("subtype")) or 1
+            count = t.get("count", 0)
+            if count == 0:
+                count = (2**63 - 1) // elem_size
+                t["count"] = count
+
+            dummy_size = count * elem_size
+            dummy_name = f"__dummy_backend_{address}_{hash(str(t))}"
+            primary_isf_path = self._file_order[0]
+            
+            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
+                "kind": "struct", "size": dummy_size, "fields": {"arr": {"offset": 0, "type": t}}
+            }
+            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+
+            instance = self._create_instance(dummy_name, proxy, instance_offset_in_buffer=address)
+            return instance.arr
+
+        # If `t` is a dictionary (like when dereferencing a pointer), 
+        # resolve it to a concrete type object before passing it to _create_instance!
+        if isinstance(t, dict):
+            t_name = t.get("name")
+            if not t_name:
+                raise ValueError(f"Cannot resolve type dictionary missing 'name': {t}")
+            t_obj = self.get_type(t_name)
+            if t_obj is None:
+                raise ValueError(f"Could not resolve concrete type for '{t_name}'")
+            t = t_obj
+
+        return self._create_instance(t, proxy, instance_offset_in_buffer=address)
 
     def from_buffer(
         self,
@@ -750,6 +815,27 @@ class DFFI:
         else:
             buf = cdata._instance_buffer
             offset = cdata._instance_offset
+        # Handle Live Memory Proxy chunked reads
+        if hasattr(buf, "backend"):
+            if maxlen > 0:
+                byte_data = buf[offset : offset + maxlen]
+                null_idx = byte_data.find(b'\x00')
+                return byte_data if null_idx == -1 else byte_data[:null_idx]
+            
+            chunk_size = 64
+            result = bytearray()
+            current_offset = offset
+            while True:
+                chunk = buf[current_offset : current_offset + chunk_size]
+                if not chunk:
+                    break
+                null_idx = chunk.find(b'\x00')
+                if null_idx != -1:
+                    result.extend(chunk[:null_idx])
+                    break
+                result.extend(chunk)
+                current_offset += chunk_size
+            return bytes(result)
 
         max_avail = len(buf) - offset
         read_len = maxlen if maxlen > 0 else max_avail
