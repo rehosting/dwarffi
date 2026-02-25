@@ -1,6 +1,7 @@
-import os
 import shutil
+
 import pytest
+
 from dwarffi import DFFI
 
 COMPILERS = {
