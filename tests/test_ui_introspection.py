@@ -12,10 +12,11 @@ def ui_ffi():
         "user_types": {
             "my_struct": {
                 "kind": "struct",
-                "size": 8,
+                "size": 12,
                 "fields": {
                     "a": {"offset": 0, "type": {"kind": "base", "name": "int"}},
-                    "__anon_field": {"offset": 4, "anonymous": True, "type": {"kind": "base", "name": "int"}}
+                    "__anon_field": {"offset": 4, "anonymous": True, "type": {"kind": "base", "name": "int"}},
+                    "some_target_field": {"offset": 8, "type": {"kind": "base", "name": "int"}}
                 }
             }
         },
@@ -60,22 +61,25 @@ def test_vtype_user_type_ui(ui_ffi):
     # .members alias
     assert "a" in t.members
     assert "__anon_field" in t.members
+    assert "some_target_field" in t.members
     assert t.members is t.fields
 
     # .to_dict()
     d = t.to_dict()
     assert d["name"] == "my_struct"
     assert d["kind"] == "struct"
-    assert d["size"] == 8
+    assert d["size"] == 12
     assert d["fields"]["a"]["offset"] == 0
     assert d["fields"]["__anon_field"]["anonymous"] is True
+    assert d["fields"]["some_target_field"]["offset"] == 8
 
     # .pretty_print() and str()
     out = t.pretty_print()
     assert str(t) == out
-    assert "struct my_struct (size: 8 bytes) {" in out
+    assert "struct my_struct (size: 12 bytes) {" in out
     assert "[+0  ] base int a;" in out
     assert "[+4  ] <anonymous> base int;" in out
+    assert "[+8  ] base int some_target_field;" in out
 
 def test_vtype_enum_ui(ui_ffi):
     """Test the UI introspection methods on VtypeEnum."""
@@ -142,3 +146,38 @@ def test_multi_isf_first_wins_resolution(tmp_path):
     
     # Shared symbol should resolve to the FIRST loaded file (core)
     assert syms["shared_sym"].address == 0x1000
+
+def test_smart_error_messages(ui_ffi):
+    """Test that typos in attribute access suggest the correct member name."""
+    inst = ui_ffi.new("struct my_struct")
+    
+    # 1. Obvious typo triggers suggestion
+    with pytest.raises(AttributeError, match=r"Did you mean 'some_target_field'\?"):
+        _ = inst.some_targt_field
+        
+    # 2. Complete mismatch does not trigger a suggestion
+    with pytest.raises(AttributeError) as exc_info:
+        _ = inst.completely_unrelated
+    assert "Did you mean" not in str(exc_info.value)
+
+def test_search_and_filtering(ui_ffi):
+    """Test the advanced searching and filtering API on the DFFI engine."""
+    # 1. Search Symbols by Glob
+    glob_syms = ui_ffi.search_symbols("*_table")
+    assert "sys_call_table" in glob_syms
+    assert "null_symbol" not in glob_syms
+    
+    # 2. Search Symbols by Regex
+    regex_syms = ui_ffi.search_symbols(r"^sys_call.*", use_regex=True)
+    assert "sys_call_table" in regex_syms
+    
+    # 3. Search Types
+    types_found = ui_ffi.search_types("my_*")
+    assert "my_struct" in types_found
+    
+    # 4. Find types by member name
+    containers = ui_ffi.find_types_with_member("some_target_field")
+    assert "my_struct" in containers
+    
+    empty_containers = ui_ffi.find_types_with_member("does_not_exist")
+    assert len(empty_containers) == 0

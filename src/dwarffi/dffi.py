@@ -1,5 +1,6 @@
 import json
 import lzma
+import fnmatch
 import os
 import re
 import shutil
@@ -998,3 +999,57 @@ class DFFI:
 
         if last_end < t.size:
             print(f"{last_end:<8} {t.size - last_end:<6} [PADDING]")
+    
+    def search_symbols(self, pattern: str, use_regex: bool = False) -> Dict[str, Any]:
+        """
+        Searches for symbols matching a glob or regex pattern.
+        
+        Args:
+            pattern: The glob pattern (e.g., '*sys_call*') or regex string.
+            use_regex: If True, evaluates 'pattern' as a regular expression.
+        """
+        results = {}
+        if use_regex:
+            compiled = re.compile(pattern)
+            for name, sym in self.symbols.items():
+                if compiled.search(name):
+                    results[name] = sym
+        else:
+            for name, sym in self.symbols.items():
+                if fnmatch.fnmatch(name, pattern):
+                    results[name] = sym
+        return results
+
+    def search_types(self, pattern: str, use_regex: bool = False) -> Dict[str, "VtypeUserType"]:
+        """
+        Searches for user types (structs/unions) matching a glob or regex pattern.
+        
+        Args:
+            pattern: The glob pattern (e.g., '*_EPROCESS*') or regex string.
+            use_regex: If True, evaluates 'pattern' as a regular expression.
+        """
+        results = {}
+        if use_regex:
+            compiled = re.compile(pattern)
+            for name, t in self.types.items():
+                if compiled.search(name):
+                    results[name] = t
+        else:
+            for name, t in self.types.items():
+                if fnmatch.fnmatch(name, pattern):
+                    results[name] = t
+        return results
+
+    def find_types_with_member(self, member_name: str) -> Dict[str, "VtypeUserType"]:
+        """
+        Finds all structs/unions that contain a specific member name.
+        Very useful for identifying containers of embedded structs (like list nodes).
+        
+        Args:
+            member_name: The exact name of the struct field to search for.
+        """
+        results = {}
+        for name, t in self.types.items():
+            if member_name in t.get_flattened_fields(self):
+                results[name] = t
+        return results
