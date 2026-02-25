@@ -75,7 +75,7 @@ class VtypeBaseType:
         """
         Lazily compiles and returns the `struct.Struct` object for this type.
         
-        Returns None for types that cannot be packed (like 'void').
+        Returns None for types that cannot be packed (like 'void' or unsupported 128-bit numbers).
         """
         if self._compiled_struct is not None:
             return self._compiled_struct
@@ -96,12 +96,25 @@ class VtypeBaseType:
         elif self.kind == "bool":
             fmt_char = "?"
         elif self.kind == "float":
-            fmt_char = "f" if self.size == 4 else "d"
+            if self.size == 2:
+                fmt_char = "e"  # IEEE 754 binary16 (half-precision)
+            elif self.size == 4:
+                fmt_char = "f"  # binary32 (single-precision)
+            elif self.size == 8:
+                fmt_char = "d"  # binary64 (double-precision)
+        elif self.kind == "complex":
+            # Natively supported in Python 3.14+, we'll attempt to compile it if present
+            if self.size == 8:
+                fmt_char = "F"  # float complex
+            elif self.size == 16:
+                fmt_char = "D"  # double complex
 
         if fmt_char:
             try:
                 self._compiled_struct = struct.Struct(endian_char + fmt_char)
             except struct.error:
+                # Silently catch instances where the running Python version is < 3.14 
+                # and doesn't support 'F'/'D', or other exotic unsupported sizes
                 self._compiled_struct = None
         else:
             self._compiled_struct = None
