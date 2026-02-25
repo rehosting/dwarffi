@@ -16,9 +16,12 @@ as defined by the toolchain and target architecture.
 
 
 Read more about `dwarf2json` and ISF in the [dwarf2json README](https://github.com/volatilityfoundation/dwarf2json).  
+
 For Windows ISF context, see [Volatility3](https://github.com/volatilityfoundation/volatility3/).
 
 You can also find many symbol tables in ISF format on [Volatility3's symbols repository](https://github.com/volatilityfoundation/volatility3/tree/develop?tab=readme-ov-file#symbol-tables).
+
+This project builds on a tremendous amount of prior work in the volatility community and takes inspiration from projects like `ctypes`, `cffi`, `pyelftools`, and `volatility3`'s symbol handling. The core innovation is the seamless integration of ISF as a first-class type system in Python, with powerful features for live memory access and dynamic type generation.
 
 
 ---
@@ -46,6 +49,10 @@ You can also find many symbol tables in ISF format on [Volatility3's symbols rep
 - **Introspection Utilities**:
   - `inspect_layout()` for pahole-style field offsets/padding
   - `pretty_print()` and `to_dict()` for human-readable / JSON-friendly inspection of instances
+- **Live Memory Backends**: Interface directly with QEMU, GDB, Volatility, or raw firmware dumps using a simple read/write API.
+- **Pointer Chaining**: Recursively dereference pointers (`ptr.deref()`) and stride through remote memory using C-style array indexing (`ptr[5]`).
+- **Zero-Copy Performance**: High-performance handler binding that automatically switches between zero-copy native buffer access and backend proxying.
+- **Fuzzy Search**: Find symbols and types across massive ISFs using glob or regex patterns.
 
 ---
 
@@ -165,6 +172,83 @@ ptr = ffi.cast("int *", 0x4000)
 next_ptr = ptr + 1
 print(hex(next_ptr.address))
 ```
+---
+
+## 🧠 Memory Backends & Live Data
+dwarffi can bind to live external memory (debuggers, emulators, or remote targets). Instead of snapshotting memory into a local bytearray, you can use from_address() to interact with the target in real-time.
+
+Using Raw Bytes (Mapping at Address 0)
+If you provide raw bytes or a bytearray as a backend, dwarffi treats it as a physical memory map starting at address 0x0.
+
+```python
+# firmware.bin is 1MB
+with open("firmware.bin", "rb") as f:
+    ffi = DFFI(isf, backend=f.read())
+
+# Map a header at its specific physical address
+header = ffi.from_address("struct fw_header", 0x4000)
+print(f"Magic: {hex(header.magic)}")
+```
+
+### Implementing a Custom Backend (e.g., GDB)
+You can wrap any memory access API by implementing the MemoryBackend interface.
+
+```python
+from dwarffi.backend import MemoryBackend
+
+class GDBBackend(MemoryBackend):
+    def read(self, address: int, size: int) -> bytes:
+        return gdb.selected_inferior().read_memory(address, size).tobytes()
+
+    def write(self, address: int, data: bytes) -> None:
+        gdb.selected_inferior().write_memory(address, data)
+
+ffi = DFFI(isf, backend=GDBBackend())
+
+# Now 'task' reads memory from GDB on-demand when you access fields
+task = ffi.from_address("struct task_struct", 0xffff888000000000)
+print(f"Current PID: {task.pid}")
+```
+### Live Pointer Traversal
+When a MemoryBackend is configured, Ptr objects become "live." Calling `.deref()` or using array indexing fetches the target memory from the backend automatically.
+
+```python
+# Get a pointer to an array of nodes in kernel memory
+list_ptr = ffi.from_address("struct node *", 0x2000)
+
+# Chained dereferencing (node->next->next)
+# Each .deref() triggers a backend read
+third_node = list_ptr.deref().next.deref().next.deref()
+
+# C-style array indexing on the backend
+fifth_node = list_ptr[4]
+```
+
+### Fuzzy Symbol Discovery
+```python
+# Find all kernel syscall table entries
+syscalls = ffi.search_symbols("__x64_sys_*")
+
+for name, sym in syscalls.items():
+    print(f"Found {name} at {hex(sym.address)}")
+```
+### Walking a Process List
+
+```python
+# Simulating a container_of walk through a kernel task list
+init_task = ffi.from_address("struct task_struct", ffi.get_symbol("init_task").address)
+
+# Walk the circular 'tasks' list_head
+curr_list = init_task.tasks.next.deref()
+
+while curr_list.address != init_task.tasks.address:
+    # Use cast with address arithmetic to get the parent task_struct
+    task_addr = curr_list.address - ffi.offsetof("struct task_struct", "tasks")
+    task = ffi.cast("struct task_struct", task_addr)
+    
+    print(f"Process: {ffi.string(task.comm)} [PID: {task.pid}]")
+    curr_list = curr_list.next.deref()
+```
 
 ---
 
@@ -247,6 +331,21 @@ Recursively format bound instances/arrays/pointers as a readable tree.
 ### `to_dict(cdata)`
 
 Convert bound instances/arrays/pointers to Python-native structures.
+
+### `from_address(ctype, address)`
+Binds a type to a specific address in the configured MemoryBackend. Returns a BoundTypeInstance or a Ptr.
+
+### `search_symbols(pattern, use_regex=False)`
+
+Searches for symbols matching a glob (e.g., *sys_call*) or regex pattern across all loaded ISFs.
+
+### `addressof(instance, *fields)`
+
+Returns a `Ptr` to an instance or a nested field. If the instance is backend-backed, the pointer address will be the absolute address in that backend.
+
+### `Ptr.deref()`
+
+The core dereference operator. If the pointer targets another pointer, it actively resolves the chain by reading from the backend.
 
 ---
 
