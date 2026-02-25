@@ -1,7 +1,7 @@
 import json
 import lzma
-from pathlib import Path
 from collections import deque
+from pathlib import Path
 
 TYPE_KINDS_WITH_SUBTYPE = {"pointer", "array"}
 TYPE_KINDS_WITH_NAME = {"struct", "class", "union", "enum", "base"}
