@@ -1,6 +1,6 @@
 import base64
 import struct
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 
 class SourceMetadata:
@@ -54,11 +54,48 @@ class VtypeMetadata:
         )
 
 
+class _FallbackIntStruct:
+    """
+    A struct.Struct-like duck type for handling exotic integer sizes 
+    (e.g., 128-bit or 24-bit integers) that are unsupported by the C struct module.
+    """
+
+    __slots__ = ("size", "signed", "endian", "format")
+
+    def __init__(self, size: int, signed: bool, endian: str):
+        self.size = size
+        self.signed = signed
+        self.endian = endian
+        self.format = ""  # Empty format aborts sequential aggregation in VtypeUserType
+
+    def unpack_from(self, buffer: Union[bytes, bytearray, memoryview], offset: int = 0) -> Tuple[int]:
+        buf_slice = buffer[offset : offset + self.size]
+        if len(buf_slice) < self.size:
+            buf_slice = bytes(buf_slice) + b'\x00' * (self.size - len(buf_slice))
+        return (int.from_bytes(buf_slice, byteorder=self.endian, signed=self.signed),)
+
+    def pack_into(self, buffer: Union[bytearray, memoryview], offset: int, value: int) -> None:
+        # Replicate C-style truncation and sign-extension wrapping
+        bits = self.size * 8
+        mask = (1 << bits) - 1
+        val = value & mask
+        if self.signed:
+            sign_bit = 1 << (bits - 1)
+            if val & sign_bit:
+                val -= 1 << bits
+        
+        raw_bytes = val.to_bytes(self.size, byteorder=self.endian, signed=self.signed)
+        valid_len = min(self.size, len(buffer) - offset)
+        if valid_len > 0:
+            buffer[offset : offset + valid_len] = raw_bytes[:valid_len]
+
+
 class VtypeBaseType:
     """
     Represents a primitive base type definition (e.g., int, char, float).
     
-    Caches a `struct.Struct` object for high-performance memory packing/unpacking.
+    Caches a `struct.Struct` object (or an equivalent duck-type) for 
+    high-performance memory packing/unpacking.
     """
 
     __slots__ = "name", "size", "signed", "kind", "endian", "_compiled_struct"
@@ -69,13 +106,13 @@ class VtypeBaseType:
         self.signed: bool = data.get("signed", False)
         self.kind: str = data.get("kind", "int")
         self.endian: str = data.get("endian", "little")
-        self._compiled_struct: Optional[struct.Struct] = None
+        self._compiled_struct: Any = None
 
-    def get_compiled_struct(self) -> Optional[struct.Struct]:
+    def get_compiled_struct(self) -> Any:
         """
         Lazily compiles and returns the `struct.Struct` object for this type.
-        
-        Returns None for types that cannot be packed (like 'void' or unsupported 128-bit numbers).
+        Returns a fallback wrapper for arbitrary integer sizes.
+        Returns None for types that cannot be packed (like 'void').
         """
         if self._compiled_struct is not None:
             return self._compiled_struct
@@ -112,12 +149,17 @@ class VtypeBaseType:
         if fmt_char:
             try:
                 self._compiled_struct = struct.Struct(endian_char + fmt_char)
+                return self._compiled_struct
             except struct.error:
-                # Silently catch instances where the running Python version is < 3.14 
-                # and doesn't support 'F'/'D', or other exotic unsupported sizes
-                self._compiled_struct = None
-        else:
-            self._compiled_struct = None
+                # Catch formats unsupported by the running Python version (e.g., F/D in < 3.14)
+                pass
+ 
+        # Fallback to pure Python byte manipulation for odd sizes like __int128_t (16 bytes)
+        if self.kind in ("int", "pointer"):
+            self._compiled_struct = _FallbackIntStruct(self.size, self.signed, self.endian)
+            return self._compiled_struct
+
+        self._compiled_struct = None
         return self._compiled_struct
 
     def __repr__(self) -> str:
@@ -230,7 +272,8 @@ class VtypeUserType:
                 current_offset = abs_offset
                 
             base_struct = base_type.get_compiled_struct()
-            if not base_struct:
+            # If base_struct is None, or it's a _FallbackIntStruct lacking a formatting char
+            if not base_struct or not base_struct.format:
                 return None
                 
             fmt_string += base_struct.format[-1]
