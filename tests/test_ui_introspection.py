@@ -1,5 +1,7 @@
 import pytest
+
 from dwarffi import DFFI
+
 
 @pytest.fixture
 def ui_ffi():

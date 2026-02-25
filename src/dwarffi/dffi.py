@@ -1,6 +1,6 @@
+import fnmatch
 import json
 import lzma
-import fnmatch
 import os
 import re
 import shutil
