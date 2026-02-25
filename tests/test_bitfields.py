@@ -50,7 +50,7 @@ def test_bitfield_read_write(base_types_little_endian):
     inst.flag_b = 10 # 01010 in binary
 
     # Verify they read back correctly
-    assert inst.flag_a == 5
+    assert inst.flag_a == -3
     assert inst.flag_b == 10
 
     # Verify the underlying byte packing:
@@ -83,17 +83,17 @@ def test_bitfield_truncation_safety(base_types_little_endian):
 
     inst = ffi.from_buffer("struct bitfield_struct", bytearray(4))
     
-    # Initialize safe_flag
-    inst.safe_flag = 0b111111 # 63
+    # Max positive value for a 6-bit signed integer is 31
+    inst.safe_flag = 31 
     
     # Assign a value way too large for small_flag (e.g., 255 / 0xFF)
-    # It should truncate to the bottom 2 bits (0b11 = 3)
+    # It should truncate to the bottom 2 bits (0b11 = -1)
     inst.small_flag = 255
     
-    assert inst.small_flag == 3
+    assert inst.small_flag == -1
     
     # Crucially, the adjacent bitfield should be entirely unaffected
-    assert inst.safe_flag == 63
+    assert inst.safe_flag == 31
 
 def test_bitfield_crosses_byte_boundary_u16():
     # Storage unit is u16, and fields live across the byte boundary.
@@ -228,8 +228,6 @@ def test_bitfield_write_preserves_unrelated_bits_in_storage_unit():
 
 
 def test_bitfield_truncates_and_masks_negative_values():
-    # Reads use: (storage >> pos) & mask :contentReference[oaicite:4]{index=4}
-    # Writes use: (value & mask) << pos :contentReference[oaicite:5]{index=5}
     base_types = {
         "u8": {"size": 1, "signed": False, "kind": "int", "endian": "little"},
         "void": {"size": 0, "signed": False, "kind": "void", "endian": "little"},

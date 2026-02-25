@@ -1,5 +1,5 @@
 import struct
-from typing import Any, Dict, Iterator, Optional, Union
+from typing import Any, Dict, Iterator, Optional, Union, Tuple
 
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
@@ -32,6 +32,46 @@ def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
             val -= 1 << bits
 
     return val
+
+
+def _get_enum_struct(enum_def: VtypeEnum, vtype_accessor: Any) -> Tuple[struct.Struct, bool]:
+    """
+    Helper to reliably get a struct.Struct and signedness for an enum,
+    falling back to synthesizing one from the enum's size if the base type is incomplete.
+    """
+    base_type_def = None
+    if enum_def.base:
+        base_type_def = vtype_accessor.get_base_type(enum_def.base)
+        if base_type_def is None:
+            raise KeyError(f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found.")
+
+    # Auto-detect signedness from constants if possible
+    has_negative = any(isinstance(v, int) and v < 0 for v in enum_def.constants.values())
+    
+    signed = has_negative
+    if base_type_def is not None:
+        signed = signed or bool(base_type_def.signed)
+        
+    size = enum_def.size if enum_def.size else (base_type_def.size if base_type_def else 4)
+    if size == 0: 
+        size = 4
+        
+    if size in (1, 2, 4, 8):
+        fmt = {1: 'b', 2: 'h', 4: 'i', 8: 'q'}[size]
+        if not signed:
+            fmt = fmt.upper()
+        endian = "<"
+        if base_type_def is not None and getattr(base_type_def, "endian", "little") == "big":
+            endian = ">"
+        return struct.Struct(endian + fmt), signed
+    
+    # fallback to base type's compiled struct if odd size
+    if base_type_def is not None:
+        obj = base_type_def.get_compiled_struct()
+        if obj is not None:
+            return obj, signed
+            
+    raise ValueError(f"Cannot get compiled struct for enum '{enum_def.name}' (size={size})")
 
 
 class BoundArrayView:
@@ -222,18 +262,7 @@ class BoundTypeInstance:
                 ) from e
         elif isinstance(self._instance_type_def, VtypeEnum):
             enum_def = self._instance_type_def
-            if enum_def.base is None:
-                raise ValueError(f"Enum '{enum_def.name}' has no base type.")
-            base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
-            if base_type_def is None:
-                raise KeyError(
-                    f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found."
-                )
-            compiled_struct_obj = base_type_def.get_compiled_struct()
-            if compiled_struct_obj is None:
-                raise ValueError(
-                    f"Cannot get compiled struct for enum base type '{enum_def.base}'."
-                )
+            compiled_struct_obj, _ = _get_enum_struct(enum_def, self._instance_vtype_accessor)
             try:
                 int_val = compiled_struct_obj.unpack_from(
                     self._instance_buffer, self._instance_offset
@@ -277,18 +306,7 @@ class BoundTypeInstance:
                 ) from e
         elif isinstance(self._instance_type_def, VtypeEnum):
             enum_def = self._instance_type_def
-            if enum_def.base is None:
-                raise ValueError(f"Enum '{enum_def.name}' has no base type for writing.")
-            base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
-            if base_type_def is None:
-                raise KeyError(
-                    f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found for writing."
-                )
-            compiled_struct_obj = base_type_def.get_compiled_struct()
-            if compiled_struct_obj is None:
-                raise ValueError(
-                    f"Cannot get compiled struct for enum base type '{enum_def.base}' for writing."
-                )
+            compiled_struct_obj, signed = _get_enum_struct(enum_def, self._instance_vtype_accessor)
 
             int_val_to_write: int
             if isinstance(new_value, EnumInstance):
@@ -308,7 +326,7 @@ class BoundTypeInstance:
                 )
             if isinstance(int_val_to_write, int):
                 int_val_to_write = _wrap_integer(
-                    int_val_to_write, base_type_def.size, bool(base_type_def.signed)
+                    int_val_to_write, compiled_struct_obj.size, signed
                 )
             try:
                 compiled_struct_obj.pack_into(
@@ -417,13 +435,8 @@ class BoundTypeInstance:
 
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
-            base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
-            if base_type_def is None:
-                raise KeyError(f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found.")
-            compiled_struct_obj = base_type_def.get_compiled_struct()
-            int_val = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[
-                0
-            ]
+            compiled_struct_obj, _ = _get_enum_struct(enum_def, self._instance_vtype_accessor)
+            int_val = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[0]
             return EnumInstance(enum_def, int_val)
 
         elif kind == "bitfield":
@@ -432,11 +445,23 @@ class BoundTypeInstance:
             underlying_base_name = field_type_info.get("type", {}).get("name")
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
-            storage_unit_val = compiled_struct_obj.unpack_from(
-                self._instance_buffer, absolute_field_offset
-            )[0]
+            
+            # Prevent buffer overrun when structs are extremely packed
+            size = underlying_base_def.size
+            buf_slice = self._instance_buffer[absolute_field_offset : absolute_field_offset + size]
+            if len(buf_slice) < size:
+                buf_slice = bytes(buf_slice) + b'\x00' * (size - len(buf_slice))
+            
+            storage_unit_val = compiled_struct_obj.unpack_from(buf_slice, 0)[0]
+            
             mask = (1 << bit_length) - 1
-            return (storage_unit_val >> bit_position) & mask
+            val = (storage_unit_val >> bit_position) & mask
+            
+            # Sign extension for standard C-integer behavior
+            if underlying_base_def.signed and (val & (1 << (bit_length - 1))):
+                val -= (1 << bit_length)
+                
+            return val
 
         elif kind == "function":
             return f"<FunctionType: {field_type_info.get('name', 'anon_func')}>"
@@ -504,19 +529,22 @@ class BoundTypeInstance:
 
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
-            base_type_def = self._instance_vtype_accessor.get_base_type(enum_def.base)
-            if base_type_def is None:
-                raise KeyError(f"Underlying base type '{enum_def.base}' for enum '{enum_def.name}' not found.")
-            compiled_struct_obj = base_type_def.get_compiled_struct()
+            compiled_struct_obj, signed = _get_enum_struct(enum_def, self._instance_vtype_accessor)
+
             if isinstance(value_to_write, EnumInstance):
                 int_val_to_write = value_to_write._value
             elif isinstance(value_to_write, int):
                 int_val_to_write = value_to_write
             elif isinstance(value_to_write, str):
                 int_val_to_write = enum_def.constants.get(value_to_write)
+                if int_val_to_write is None:
+                    raise ValueError(f"Enum constant '{value_to_write}' not found.")
+            else:
+                raise TypeError("Expected int, str, or EnumInstance for enum assignment.")
+
             if isinstance(int_val_to_write, int):
                 int_val_to_write = _wrap_integer(
-                    int_val_to_write, base_type_def.size, bool(base_type_def.signed)
+                    int_val_to_write, compiled_struct_obj.size, signed
                 )
             compiled_struct_obj.pack_into(
                 self._instance_buffer, absolute_field_offset, int_val_to_write
@@ -528,17 +556,25 @@ class BoundTypeInstance:
             underlying_base_name = field_type_info.get("type").get("name")
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
-            current_storage_val = compiled_struct_obj.unpack_from(
-                self._instance_buffer, absolute_field_offset
-            )[0]
+            
+            # Prevent buffer overrun when structs are extremely packed
+            size = underlying_base_def.size
+            buf_slice = bytearray(self._instance_buffer[absolute_field_offset : absolute_field_offset + size])
+            pad_len = size - len(buf_slice)
+            if pad_len > 0:
+                buf_slice.extend(b'\x00' * pad_len)
+            
+            current_storage_val = compiled_struct_obj.unpack_from(buf_slice, 0)[0]
             mask = (1 << bit_length) - 1
             value_to_set = value_to_write & mask
             new_storage_val = (current_storage_val & ~(mask << bit_position)) | (
                 value_to_set << bit_position
             )
-            compiled_struct_obj.pack_into(
-                self._instance_buffer, absolute_field_offset, new_storage_val
-            )
+            compiled_struct_obj.pack_into(buf_slice, 0, new_storage_val)
+            
+            # Write back up to valid buffer size limit
+            valid_len = size - pad_len
+            self._instance_buffer[absolute_field_offset : absolute_field_offset + valid_len] = buf_slice[:valid_len]
 
         elif kind in ("array", "struct", "union"):
             raise NotImplementedError(
