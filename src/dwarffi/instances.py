@@ -232,14 +232,44 @@ class BoundTypeInstance:
         instance_offset_in_buffer: int = 0,
     ):
         if not isinstance(buffer, (bytearray, memoryview)):
-            raise TypeError("Internal Error: BoundTypeInstance expects a bytearray.")
+            if not hasattr(buffer, "backend"):
+                raise TypeError("Internal Error: BoundTypeInstance expects a bytearray, memoryview, or MemoryBackend.")
         self._instance_type_name = type_name
         self._instance_type_def = type_def
         self._instance_buffer = buffer
         self._instance_vtype_accessor = vtype_accessor
         self._instance_offset = instance_offset_in_buffer
         self._instance_cache: Dict[str, Any] = {}
+        if hasattr(buffer, "backend"):
+            self._instance_unpack_struct = self._instance_unpack_proxy
+            self._instance_pack_struct = self._instance_pack_proxy
+        else:
+            self._instance_unpack_struct = self._instance_unpack_native
+            self._instance_pack_struct = self._instance_pack_native
 
+    def _instance_unpack_native(self, compiled_struct_obj: Any, offset: int) -> Any:
+        """Fast path: Zero-copy native buffer read."""
+        return compiled_struct_obj.unpack_from(self._instance_buffer, offset)[0]
+
+    def _instance_pack_native(self, compiled_struct_obj: Any, offset: int, value: Any) -> None:
+        """Fast path: Zero-copy native buffer write."""
+        compiled_struct_obj.pack_into(self._instance_buffer, offset, value)
+
+    def _instance_unpack_proxy(self, compiled_struct_obj: Any, offset: int) -> Any:
+        """Proxy path: Slice-based read for non-buffer-protocol objects."""
+        data = self._instance_buffer[offset : offset + compiled_struct_obj.size]
+        if hasattr(compiled_struct_obj, "unpack"):
+            return compiled_struct_obj.unpack(data)[0]
+        return compiled_struct_obj.unpack_from(data, 0)[0]
+
+    def _instance_pack_proxy(self, compiled_struct_obj: Any, offset: int, value: Any) -> None:
+        """Proxy path: Slice-based write for non-buffer-protocol objects."""
+        if hasattr(compiled_struct_obj, "pack"):
+            data = compiled_struct_obj.pack(value)
+        else:
+            data = bytearray(compiled_struct_obj.size)
+            compiled_struct_obj.pack_into(data, 0, value)
+        self._instance_buffer[offset : offset + compiled_struct_obj.size] = data
     def _get_value(self) -> Any:
         """Internal: Deserializes the value if this is a base type or enum."""
         if isinstance(self._instance_type_def, VtypeUserType):
@@ -254,9 +284,7 @@ class BoundTypeInstance:
             if compiled_struct_obj is None:
                 raise ValueError(f"Cannot get compiled struct for base type '{base_type_def.name}'")
             try:
-                return compiled_struct_obj.unpack_from(
-                    self._instance_buffer, self._instance_offset
-                )[0]
+                return self._instance_unpack_struct(compiled_struct_obj, self._instance_offset)
             except struct.error as e:
                 raise struct.error(
                     f"Error unpacking value for base type '{base_type_def.name}': {e}"
@@ -265,9 +293,7 @@ class BoundTypeInstance:
             enum_def = self._instance_type_def
             compiled_struct_obj, _ = _get_enum_struct(enum_def, self._instance_vtype_accessor)
             try:
-                int_val = compiled_struct_obj.unpack_from(
-                    self._instance_buffer, self._instance_offset
-                )[0]
+                int_val = self._instance_unpack_struct(compiled_struct_obj, self._instance_offset)
                 return EnumInstance(enum_def, int_val)
             except struct.error as e:
                 raise struct.error(f"Error unpacking value for enum '{enum_def.name}': {e}") from e
@@ -298,9 +324,7 @@ class BoundTypeInstance:
                 new_value = _wrap_integer(new_value, base_type_def.size, bool(base_type_def.signed))
 
             try:
-                compiled_struct_obj.pack_into(
-                    self._instance_buffer, self._instance_offset, new_value
-                )
+                self._instance_pack_struct(compiled_struct_obj, self._instance_offset, new_value)
             except struct.error as e:
                 raise struct.error(
                     f"Error packing value for base type '{base_type_def.name}': {e}"
@@ -330,9 +354,7 @@ class BoundTypeInstance:
                     int_val_to_write, compiled_struct_obj.size, signed
                 )
             try:
-                compiled_struct_obj.pack_into(
-                    self._instance_buffer, self._instance_offset, int_val_to_write
-                )
+                self._instance_pack_struct(compiled_struct_obj, self._instance_offset, int_val_to_write)
             except struct.error as e:
                 raise struct.error(f"Error packing value for enum '{enum_def.name}': {e}") from e
         else:
@@ -405,16 +427,14 @@ class BoundTypeInstance:
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if base_type_def.size == 0:
                 return None
-            return compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[0]
+            return self._instance_unpack_struct(compiled_struct_obj, absolute_field_offset)
 
         elif kind == "pointer":
             ptr_base_type = self._instance_vtype_accessor.get_base_type("pointer")
             if ptr_base_type is None:
                 raise KeyError("Base type 'pointer' not defined in loaded ISF files. Cannot read pointer field.")
             compiled_struct_obj = ptr_base_type.get_compiled_struct()
-            address = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[
-                0
-            ]
+            address = self._instance_unpack_struct(compiled_struct_obj, absolute_field_offset)
             return Ptr(address, field_type_info.get("subtype"), self._instance_vtype_accessor)
 
         elif kind == "array":
@@ -437,7 +457,7 @@ class BoundTypeInstance:
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
             compiled_struct_obj, _ = _get_enum_struct(enum_def, self._instance_vtype_accessor)
-            int_val = compiled_struct_obj.unpack_from(self._instance_buffer, absolute_field_offset)[0]
+            int_val = self._instance_unpack_struct(compiled_struct_obj, absolute_field_offset)
             return EnumInstance(enum_def, int_val)
 
         elif kind == "bitfield":
@@ -449,9 +469,9 @@ class BoundTypeInstance:
             
             # Prevent buffer overrun when structs are extremely packed
             size = underlying_base_def.size
-            buf_slice = self._instance_buffer[absolute_field_offset : absolute_field_offset + size]
+            buf_slice = bytearray(self._instance_buffer[absolute_field_offset : absolute_field_offset + size])
             if len(buf_slice) < size:
-                buf_slice = bytes(buf_slice) + b'\x00' * (size - len(buf_slice))
+                buf_slice.extend(b'\x00' * (size - len(buf_slice)))
             
             storage_unit_val = compiled_struct_obj.unpack_from(buf_slice, 0)[0]
             
@@ -510,9 +530,7 @@ class BoundTypeInstance:
                 value_to_write = _wrap_integer(
                     value_to_write, base_type_def.size, bool(base_type_def.signed)
                 )
-            compiled_struct_obj.pack_into(
-                self._instance_buffer, absolute_field_offset, value_to_write
-            )
+            self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, value_to_write)
 
         elif kind == "pointer":
             ptr_base_type = self._instance_vtype_accessor.get_base_type("pointer")
@@ -524,9 +542,7 @@ class BoundTypeInstance:
             )
             if isinstance(address_to_write, int):
                 address_to_write = _wrap_integer(address_to_write, ptr_base_type.size, False)
-            compiled_struct_obj.pack_into(
-                self._instance_buffer, absolute_field_offset, address_to_write
-            )
+            self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, address_to_write)
 
         elif kind == "enum":
             enum_def = self._instance_vtype_accessor.get_enum(name)
@@ -547,9 +563,7 @@ class BoundTypeInstance:
                 int_val_to_write = _wrap_integer(
                     int_val_to_write, compiled_struct_obj.size, signed
                 )
-            compiled_struct_obj.pack_into(
-                self._instance_buffer, absolute_field_offset, int_val_to_write
-            )
+            self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, int_val_to_write)
 
         elif kind == "bitfield":
             bit_length = field_type_info.get("bit_length")
@@ -838,6 +852,40 @@ class Ptr:
 
         # If it's a raw ISF dictionary, use .get()
         return self._subtype_info.get("name", "void")
+
+    def deref(self) -> Any:
+        """
+        Dereferences the pointer. If it points to another pointer, it actively resolves 
+        the pointer chain natively.
+        Requires the DFFI engine to have a configured MemoryBackend.
+        """
+        if not self._subtype_info or self._subtype_info.get("name") == "void":
+            raise TypeError("Cannot dereference a void pointer.")
+            
+        subtype = self._vtype_accessor._resolve_type_info(self._subtype_info)
+        
+        # If the target is ALSO a pointer, we must read the raw pointer value from memory
+        if isinstance(subtype, dict) and subtype.get("kind") == "pointer":
+            if not getattr(self._vtype_accessor, "backend", None):
+                raise RuntimeError("Cannot dereference pointer chain without a configured memory backend.")
+            ptr_base_type = self._vtype_accessor.get_base_type("pointer")
+            size = ptr_base_type.size
+            data = self._vtype_accessor.backend.read(self.address, size)
+            target_addr = ptr_base_type.get_compiled_struct().unpack(data)[0]
+            return Ptr(target_addr, subtype.get("subtype"), self._vtype_accessor)
+            
+        return self._vtype_accessor.from_address(subtype, self.address)
+
+    def __getitem__(self, index: int) -> Any:
+        """
+        Allows C-style array indexing on pointers (e.g., ptr[0], ptr[5]).
+        Equivalent to (ptr + index).deref()
+        """
+        if not isinstance(index, int):
+            raise TypeError("Pointer indices must be integers.")
+            
+        target_ptr = self + index
+        return target_ptr.deref()
 
     # --- Type Conversions ---
     def __int__(self) -> int:
