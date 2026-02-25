@@ -63,6 +63,51 @@ class DFFI:
         else:
             raise TypeError("load_isf expects a file path (str) or a dictionary (dict)")
     
+    @property
+    def symbols(self) -> Dict[str, Any]:
+        """Returns a dictionary of all symbols across all loaded ISF files."""
+        merged = {}
+        # Iterate reversed so earlier loaded ISFs correctly overwrite later ones (first-wins resolution)
+        for path in reversed(self._file_order):
+            for sym_name in self.vtypejsons[path]._raw_symbols.keys():
+                sym = self.get_symbol(sym_name)
+                if sym:
+                    merged[sym_name] = sym
+        return merged
+
+    @property
+    def types(self) -> Dict[str, "VtypeUserType"]:
+        """Returns a dictionary of all user types (structs/unions) across all loaded ISF files."""
+        merged = {}
+        for path in reversed(self._file_order):
+            for type_name in self.vtypejsons[path]._raw_user_types.keys():
+                t = self.get_user_type(type_name)
+                if t:
+                    merged[type_name] = t
+        return merged
+
+    @property
+    def base_types(self) -> Dict[str, "VtypeBaseType"]:
+        """Returns a dictionary of all base types across all loaded ISF files."""
+        merged = {}
+        for path in reversed(self._file_order):
+            for type_name in self.vtypejsons[path]._raw_base_types.keys():
+                t = self.get_base_type(type_name)
+                if t:
+                    merged[type_name] = t
+        return merged
+
+    @property
+    def enums(self) -> Dict[str, "VtypeEnum"]:
+        """Returns a dictionary of all enums across all loaded ISF files."""
+        merged = {}
+        for path in reversed(self._file_order):
+            for enum_name in self.vtypejsons[path]._raw_enums.keys():
+                t = self.get_enum(enum_name)
+                if t:
+                    merged[enum_name] = t
+        return merged
+    
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
         """Resolves typedefs to their underlying concrete types."""
         visited = set()
