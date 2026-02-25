@@ -1,5 +1,5 @@
 import struct
-from typing import Any, Dict, Iterator, Optional, Union, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple, Union
 
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
