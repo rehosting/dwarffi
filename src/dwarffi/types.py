@@ -90,6 +90,29 @@ class _FallbackIntStruct:
             buffer[offset : offset + valid_len] = raw_bytes[:valid_len]
 
 
+class _FallbackBytesStruct:
+    """Duck-type for opaque or un-parseable base types (e.g. 80-bit floats, SIMD vectors)."""
+    __slots__ = ("size", "format")
+    def __init__(self, size: int):
+        self.size = size
+        self.format = ""
+
+    def unpack_from(self, buffer: Union[bytes, bytearray, memoryview], offset: int = 0) -> Tuple[bytes]:
+        buf_slice = buffer[offset : offset + self.size]
+        if len(buf_slice) < self.size:
+            buf_slice = bytes(buf_slice) + b'\x00' * (self.size - len(buf_slice))
+        return (bytes(buf_slice),)
+
+    def pack_into(self, buffer: Union[bytearray, memoryview], offset: int, value: Union[bytes, bytearray]) -> None:
+        if not isinstance(value, (bytes, bytearray, memoryview)):
+            raise TypeError(f"Unsupported primitive type requires raw bytes, got {type(value).__name__}")
+        if len(value) != self.size:
+            raise ValueError(f"Expected exactly {self.size} bytes, got {len(value)}")
+        valid_len = min(self.size, len(buffer) - offset)
+        if valid_len > 0:
+            buffer[offset : offset + valid_len] = value[:valid_len]
+
+
 class VtypeBaseType:
     """
     Represents a primitive base type definition (e.g., int, char, float).
@@ -159,7 +182,8 @@ class VtypeBaseType:
             self._compiled_struct = _FallbackIntStruct(self.size, self.signed, self.endian)
             return self._compiled_struct
 
-        self._compiled_struct = None
+        # For unhandled floats (80-bit, 128-bit) or SIMD vectors, fall back to raw bytes.
+        self._compiled_struct = _FallbackBytesStruct(self.size)
         return self._compiled_struct
 
     def __repr__(self) -> str:
