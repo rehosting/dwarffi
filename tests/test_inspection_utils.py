@@ -1,5 +1,7 @@
 import pytest
+
 from dwarffi.dffi import DFFI
+
 
 @pytest.fixture
 def inspection_env():

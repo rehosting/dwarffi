@@ -1,4 +1,3 @@
-import pytest
 
 from dwarffi import DFFI
 

@@ -3,7 +3,6 @@ from pathlib import Path
 
 from dwarffi import DFFI
 
-
 FIXTURE = Path(__file__).parent / "fixtures" / "windows_min_ntkrnlmp.json"
 
 

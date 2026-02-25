@@ -3,9 +3,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from rich import print
-from dwarffi import DFFI
 
+from rich import print
+
+from dwarffi import DFFI
 
 DEFAULT_TYPES = [
     "_EPROCESS",
@@ -66,7 +67,7 @@ def main(argv: list[str] | None = None) -> int:
     # Try to access underlying metadata if DFFI exposes it; otherwise, fall back gracefully.
     isf = getattr(ffi, "isf", None) or getattr(ffi, "_isf", None)
 
-    print(f"[2/4] Inspecting metadata (Windows PDB identity, if present)")
+    print("[2/4] Inspecting metadata (Windows PDB identity, if present)")
     if isinstance(isf, dict):
         md = isf.get("metadata", {})
         pdb = md.get("windows", {}).get("pdb", {})
@@ -93,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print("      Pointer width   : (unknown; will still attempt demos)")
 
-    print(f"[3/4] Probing common Windows structs to demonstrate type resolution")
+    print("[3/4] Probing common Windows structs to demonstrate type resolution")
     for tname in args.types:
         try:
             t = ffi.typeof(f"struct {tname}")

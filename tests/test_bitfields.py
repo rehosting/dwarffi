@@ -1,5 +1,6 @@
-from dwarffi import DFFI
 import struct
+
+from dwarffi import DFFI
 
 
 def test_bitfield_read_write(base_types_little_endian):
