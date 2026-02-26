@@ -388,7 +388,7 @@ class DFFI:
             The size in bytes as an integer.
         """
         if isinstance(ctype, (str, Ptr, BoundArrayView)):
-            t = self.typeof(ctype)
+            t = self._typeof_or_raise(ctype)
         else:
             t = ctype
 
@@ -614,7 +614,7 @@ class DFFI:
         Returns:
             The newly typed BoundTypeInstance or Ptr.
         """
-        t = self.typeof(ctype)
+        t = self._typeof_or_raise(ctype)
 
         # Casting an integer to a pointer
         if isinstance(value, int):
