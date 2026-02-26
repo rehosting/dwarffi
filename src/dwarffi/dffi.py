@@ -538,6 +538,7 @@ class DFFI:
 
         # 2. Handle dynamic arrays natively
         if isinstance(t, dict) and t.get("kind") == "array":
+            t = dict(t)  # Make a shallow copy to avoid mutating the original type info
             if init is not None:
                 if isinstance(init, (bytes, bytearray, str)):
                     if isinstance(init, str):
@@ -566,6 +567,8 @@ class DFFI:
             arr_view = instance.arr
 
             if init is not None:
+                if isinstance(init, str):
+                    init = init.encode("utf-8")
                 if isinstance(init, (bytes, bytearray)):
                     buf[: len(init)] = init
                 elif isinstance(init, list):
@@ -580,7 +583,17 @@ class DFFI:
         instance = self._create_instance(t, buf)
 
         if init is not None:
-            self._deep_init(instance, init)
+            # Safely handle string, bytes, and bytearray initialization
+            if isinstance(init, str):
+                init = init.encode("utf-8")
+                
+            if isinstance(init, (bytes, bytearray)):
+                # Copy the bytes into the buffer up to the struct's size limit
+                copy_len = min(len(buf), len(init))
+                buf[:copy_len] = init[:copy_len]
+            else:
+                # Fall back to recursive dictionary/list population
+                self._deep_init(instance, init)
 
         return instance
 
