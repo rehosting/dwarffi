@@ -652,6 +652,7 @@ class DFFI:
         proxy = LiveMemoryProxy(self.backend)
 
         if isinstance(t, dict) and t.get("kind") == "array":
+            t = dict(t) # Shallow copy to avoid mutating original type info
             elem_size = self.sizeof(t.get("subtype")) or 1
             count = t.get("count", 0)
             if count == 0:
@@ -711,6 +712,7 @@ class DFFI:
 
         # Handle pointers and dynamic arrays natively by wrapping them in an array view
         if isinstance(t, dict) and t.get("kind") in ("array", "pointer"):
+            t = dict(t) # Shallow copy to avoid mutating original type info
             if t.get("kind") == "pointer":
                 # Treat a bound pointer like an unbounded array of that pointer type
                 t = {"kind": "array", "count": 0, "subtype": t}
