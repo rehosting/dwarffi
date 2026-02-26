@@ -387,7 +387,9 @@ class DFFI:
             t = ctype
 
         size = None
-        if isinstance(t, BoundTypeInstance):
+        if isinstance(t, VTYPE_CLASSES):
+            return t.size
+        elif isinstance(t, BoundTypeInstance):
             size = t._instance_type_def.size
         elif isinstance(t, dict):
             kind = t.get("kind")
