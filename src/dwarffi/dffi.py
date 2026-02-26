@@ -8,12 +8,19 @@ import struct
 import subprocess
 import tempfile
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, TypeAlias
 
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
 from .types import VtypeBaseType, VtypeEnum, VtypeSymbol, VtypeUserType
+
+# Clean, unified Type Aliases
+VTYPE_CLASSES = (VtypeBaseType, VtypeEnum, VtypeUserType)
+BOUND_TYPE_CLASSES = (BoundTypeInstance, BoundArrayView, Ptr)
+
+Vtype: TypeAlias = Union[VtypeBaseType, VtypeEnum, VtypeUserType]
+BoundType: TypeAlias = Union[BoundTypeInstance, BoundArrayView, Ptr]
 
 
 class DFFI:
@@ -201,7 +208,7 @@ class DFFI:
             return sym.address
         return None
 
-    def get_type(self, name: str) -> Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]]:
+    def get_type(self, name: str) -> Optional[Vtype]:
         """General lookup for any type by name."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type(name):
@@ -225,7 +232,7 @@ class DFFI:
     
     def _create_instance(
         self,
-        type_input: Union[str, VtypeUserType, VtypeBaseType, VtypeEnum],
+        type_input: Union[str, Vtype],
         buffer: Union[bytes, bytearray, memoryview],
         instance_offset_in_buffer: int = 0,
     ) -> BoundTypeInstance:
@@ -297,7 +304,7 @@ class DFFI:
             return {"kind": "enum", "name": base_t.name}
         return {"name": base_name}
     
-    def _parse_ctype_string_impl(self, ctype: str) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
+    def _parse_ctype_string_impl(self, ctype: str) -> Union[Vtype, dict]:
         """Internal uncached parser for C-style strings."""
         # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
         # but keep a copy for the regex parsers
@@ -333,16 +340,7 @@ class DFFI:
         elif resolved_info.get("kind") in ("pointer", "array"):
             return resolved_info
         else:
-            t = self.get_type(resolved_info["name"])
-            if not t:
-                raise KeyError(
-                    f"Resolved typedef '{ctype}' to unknown target '{resolved_info['name']}'"
-                )
-            return t
-
-    def typeof(
-        self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView, Dict]
-    ) -> Union[VtypeUserType, VtypeBaseType, VtypeEnum, Dict]:
+    def typeof(self, ctype: Union[str, Vtype, BoundType, dict]) -> Union[Vtype, dict, None]:
         """
         Resolves a type definition from a string or extracts it from an existing instance.
 
@@ -371,7 +369,7 @@ class DFFI:
             f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}"
         )
 
-    def sizeof(self, ctype: Union[str, BoundTypeInstance, Ptr, BoundArrayView, Any]) -> int:
+    def sizeof(self, ctype: Union[str, Vtype, BoundType, Any]) -> int:
         """
         Calculates the memory size in bytes of the given type or instance.
         
@@ -521,12 +519,12 @@ class DFFI:
         elif isinstance(instance, BoundTypeInstance):
             instance[0] = init
 
-    def new(self, ctype: str, init: Any = None) -> Union[BoundTypeInstance, BoundArrayView]:
+    def new(self, ctype: Union[str, Vtype, dict], init: Any = None) -> BoundType:
         """
         Allocates a new memory buffer for the specified type and binds it.
 
         Args:
-            ctype: The C-type string (e.g. 'int', 'struct my_struct', 'char[10]').
+            ctype: The C-type string or type object (e.g. 'int', 'struct my_struct', 'char[10]', VtypeUserType, VtypeBaseType, VtypeEnum).
             init: Optional initial data (dict, list, string, or bytes) to populate the struct/array.
 
         Returns:
@@ -582,12 +580,12 @@ class DFFI:
 
         return instance
 
-    def cast(self, ctype: str, value: Any) -> Union[BoundTypeInstance, Ptr, BoundArrayView]:
+    def cast(self, ctype: Union[str, Vtype], value: Any) -> BoundType:
         """
         Interprets an integer address or existing CData as a new type.
 
         Args:
-            ctype: The target C-type to cast into.
+            ctype: The target C-type to cast into (str or type)
             value: The integer memory address, or existing BoundTypeInstance to re-cast.
             
         Returns:
@@ -620,11 +618,7 @@ class DFFI:
 
         raise TypeError(f"Cannot cast {type(value)} to {ctype}")
     
-    def from_address(
-        self,
-        ctype: Union[str, "VtypeUserType", "VtypeBaseType", "VtypeEnum", Dict],
-        address: int
-    ) -> Union["BoundTypeInstance", "BoundArrayView", "Ptr"]:
+    def from_address(self, ctype: Union[str, Vtype, dict], address: int) -> BoundType:
         """
         Creates a new DFFI instance bound to an absolute address in the configured MemoryBackend.
         Operates on LIVE memory via the LiveMemoryProxy.
@@ -674,11 +668,11 @@ class DFFI:
 
     def from_buffer(
         self,
-        ctype: str,
+        ctype: Union[str, Vtype],
         python_buffer: Union[bytearray, memoryview, bytes],
         offset: int = 0,
         require_writable: bool = False,
-    ) -> Union[BoundTypeInstance, BoundArrayView]:
+    ) -> BoundType:
         """
         Creates a new DFFI instance bound directly to an existing Python memory buffer.
 
@@ -731,7 +725,7 @@ class DFFI:
 
         return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset)
 
-    def buffer(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], size: int = -1) -> memoryview:
+    def buffer(self, cdata: BoundType, size: int = -1) -> memoryview:
         """
         High-performance extraction: Returns a zero-copy memoryview of the underlying buffer.
 
@@ -792,7 +786,7 @@ class DFFI:
 
         dest_buf[dest_off : dest_off + n] = src_buf[src_off : src_off + n]
 
-    def string(self, cdata: Union[BoundTypeInstance, Ptr, BoundArrayView], maxlen: int = -1) -> bytes:
+    def string(self, cdata: BoundType, maxlen: int = -1) -> bytes:
         """
         Reads a null-terminated string from memory, or returns the name of an enum value.
         
@@ -854,7 +848,7 @@ class DFFI:
         null_idx = byte_data.find(b'\x00')
         return byte_data if null_idx == -1 else byte_data[:null_idx]
 
-    def unpack(self, cdata: Union[BoundArrayView, BoundTypeInstance], count: int = -1) -> Union[list, tuple]:
+    def unpack(self, cdata: BoundType, count: int = -1) -> Union[list, tuple]:
         """
         Fast-Path API: Dumps a fully primitive struct or array out to Python in a single C operation.
 
@@ -1061,7 +1055,7 @@ class DFFI:
 
         return cdata
 
-    def inspect_layout(self, ctype: str) -> None:
+    def inspect_layout(self, ctype: Union[str, Vtype]) -> None:
         """
         Prints the exact memory layout of a type (pahole-style), showing offsets and padding.
         """
