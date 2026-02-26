@@ -54,6 +54,12 @@ class DFFI:
                     self.load_isf(item)
             else:
                 self.load_isf(isf_input)
+    
+    def _add_vtypejson(self, source: str, vtype_obj: VtypeJson) -> None:
+        """Internal helper to add a VtypeJson instance to the engine."""
+        self._file_order.append(source)
+        self.vtypejsons[source] = vtype_obj
+        self._parse_ctype_string.cache_clear()  # Clear the cache to ensure new types are recognized
 
     def load_isf(self, isf_input: Union[str, dict]) -> None:
         """
@@ -66,12 +72,10 @@ class DFFI:
             # Generate a unique pseudo-path for the dictionary entry
             pseudo_path = f"<dict_{id(isf_input)}>"
             if pseudo_path not in self.vtypejsons:
-                self._file_order.append(pseudo_path)
-                self.vtypejsons[pseudo_path] = VtypeJson(isf_input)
+                self._add_vtypejson(pseudo_path, VtypeJson(isf_input))
         elif isinstance(isf_input, str):
             if isf_input not in self.vtypejsons:
-                self._file_order.append(isf_input)
-                self.vtypejsons[isf_input] = VtypeJson(isf_input)
+                self._add_vtypejson(isf_input, VtypeJson(isf_input))
         else:
             raise TypeError("load_isf expects a file path (str) or a dictionary (dict)")
     
@@ -984,8 +988,8 @@ class DFFI:
             vtype_obj = VtypeJson(isf_dict)
 
             pseudo_path = f"<cdef_{id(source)}>"
-            self._file_order.append(pseudo_path)
-            self.vtypejsons[pseudo_path] = vtype_obj
+            self._add_vtypejson(vtype_obj, pseudo_path)
+
 
     def pretty_print(self, cdata: Any, indent: int = 0, name: str = None) -> str:
         """
