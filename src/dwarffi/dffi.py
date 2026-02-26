@@ -859,7 +859,8 @@ class DFFI:
         byte_data = memoryview(buf)[offset : offset + read_len].tobytes()
         
         if maxlen > 0:
-            return byte_data
+            null_idx = byte_data.find(b'\x00')
+            return byte_data if null_idx == -1 else byte_data[:null_idx]
             
         # Rapid C-level search for the null terminator
         null_idx = byte_data.find(b'\x00')
