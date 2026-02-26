@@ -509,7 +509,15 @@ class DFFI:
         Returns:
             A `Ptr` object representing the memory address.
         """
-        base_addr = cdata._instance_offset
+        # Base should be absolute address when backend-backed
+        base_addr = getattr(cdata, "_address", None)
+        if base_addr is None:
+            # Buffer-only instance (no backend address)
+            base_addr = cdata._instance_offset
+        else:
+            # Backend-backed: absolute base + offset within the object
+            base_addr = base_addr + cdata._instance_offset
+
         target_type_info = cdata._instance_type_def
 
         if fields_or_indexes:
