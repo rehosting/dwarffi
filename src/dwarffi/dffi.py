@@ -22,6 +22,9 @@ BOUND_TYPE_CLASSES = (BoundTypeInstance, BoundArrayView, Ptr)
 Vtype: TypeAlias = Union[VtypeBaseType, VtypeEnum, VtypeUserType]
 BoundType: TypeAlias = Union[BoundTypeInstance, BoundArrayView, Ptr]
 
+UNBOUNDED_ARRAY_MAX_BYTES = 64 * 1024   # 64 KiB default (tunable)
+UNBOUNDED_ARRAY_MIN_ELEMS = 1           # at least 1 element
+
 
 class DFFI:
     """
