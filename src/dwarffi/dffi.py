@@ -350,6 +350,8 @@ class DFFI:
         Returns:
             The resolved Type Definition object or ISF type dictionary.
         """
+        if isinstance(ctype, VTYPE_CLASSES):
+            return ctype
         if isinstance(ctype, dict):
             return ctype
         if isinstance(ctype, BoundTypeInstance):
