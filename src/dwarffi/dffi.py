@@ -304,7 +304,7 @@ class DFFI:
             return {"kind": "enum", "name": base_t.name}
         return {"name": base_name}
     
-    def _parse_ctype_string_impl(self, ctype: str) -> Union[Vtype, dict]:
+    def _parse_ctype_string_impl(self, ctype: str) -> Union[Vtype, dict, None]:
         """Internal uncached parser for C-style strings."""
         # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
         # but keep a copy for the regex parsers
@@ -333,13 +333,12 @@ class DFFI:
         resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
 
         if resolved_info.get("kind") == "typedef":
-            t = self.get_type(lookup_name)
-            if not t:
-                raise KeyError(f"Unknown DWARF type: '{ctype}'")
-            return t
+            return self.get_type(lookup_name)
         elif resolved_info.get("kind") in ("pointer", "array"):
             return resolved_info
         else:
+            return self.get_type(resolved_info["name"])
+
     def typeof(self, ctype: Union[str, Vtype, BoundType, dict]) -> Union[Vtype, dict, None]:
         """
         Resolves a type definition from a string or extracts it from an existing instance.
