@@ -340,11 +340,11 @@ class DFFI:
         resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
 
         if resolved_info.get("kind") == "typedef":
-            return self._typeof_or_raise(lookup_name)
+            return self.typeof(lookup_name)
         elif resolved_info.get("kind") in ("pointer", "array"):
             return resolved_info
         else:
-            return self._typeof_or_raise(resolved_info["name"])
+            return self.typeof(resolved_info["name"])
 
     def typeof(self, ctype: Union[str, Vtype, BoundType, dict]) -> Union[Vtype, dict, None]:
         """
