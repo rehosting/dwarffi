@@ -8,7 +8,7 @@ import struct
 import subprocess
 import tempfile
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Union, TypeAlias
+from typing import Any, Dict, List, Optional, TypeAlias, Union
 
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
