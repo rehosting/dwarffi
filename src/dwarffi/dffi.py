@@ -208,6 +208,12 @@ class DFFI:
             return sym.address
         return None
 
+    def _typeof_or_raise(self, ctype: Union[str, Vtype, BoundType, dict], *, ctx: str = "") -> Union[Vtype, dict]:
+        t = self.typeof(ctype)
+        if t is None:
+            raise KeyError(f"Unknown type {ctype!r}" + (f" (in {ctx})" if ctx else ""))
+        return t
+
     def get_type(self, name: str) -> Optional[Vtype]:
         """General lookup for any type by name."""
         for f in self._file_order:
@@ -250,7 +256,7 @@ class DFFI:
 
         if isinstance(type_input, str):
             type_name = type_input
-            type_def = self.get_type(type_input)
+            type_def = self._typeof_or_raise(type_input)
         else:
             type_def = type_input
             type_name = getattr(type_def, "name", "unknown")
@@ -334,11 +340,11 @@ class DFFI:
         resolved_info = self._resolve_type_info({"kind": "typedef", "name": lookup_name})
 
         if resolved_info.get("kind") == "typedef":
-            return self.get_type(lookup_name)
+            return self._typeof_or_raise(lookup_name)
         elif resolved_info.get("kind") in ("pointer", "array"):
             return resolved_info
         else:
-            return self.get_type(resolved_info["name"])
+            return self._typeof_or_raise(resolved_info["name"])
 
     def typeof(self, ctype: Union[str, Vtype, BoundType, dict]) -> Union[Vtype, dict, None]:
         """
@@ -455,7 +461,7 @@ class DFFI:
             # Advance to the next type in the chain
             next_t_info = self._resolve_type_info(field.type_info)
             if next_t_info.get("kind") in ["struct", "union"]:
-                current_type = self.get_type(next_t_info.get("name"))
+                current_type = self._typeof_or_raise(next_t_info.get("name"))
             else:
                 current_type = next_t_info
 
@@ -494,7 +500,7 @@ class DFFI:
                 
                 # If nested, continue the search in the next struct
                 if target_type_info.get("kind") in ["struct", "union"]:
-                    current_type = self.get_type(target_type_info.get("name"))
+                    current_type = self._typeof_or_raise(target_type_info.get("name"))
                 else:
                     current_type = target_type_info
 
