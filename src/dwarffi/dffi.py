@@ -1000,7 +1000,7 @@ class DFFI:
             vtype_obj = VtypeJson(isf_dict)
 
             pseudo_path = f"<cdef_{id(source)}>"
-            self._add_vtypejson(vtype_obj, pseudo_path)
+            self._add_vtypejson(pseudo_path, vtype_obj)
 
 
     def pretty_print(self, cdata: Any, indent: int = 0, name: str = None) -> str:
