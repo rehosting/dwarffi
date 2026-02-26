@@ -658,19 +658,24 @@ class DFFI:
         proxy = LiveMemoryProxy(self.backend)
 
         if isinstance(t, dict) and t.get("kind") == "array":
-            t = dict(t) # Shallow copy to avoid mutating original type info
-            elem_size = self.sizeof(t.get("subtype")) or 1
-            count = t.get("count", 0)
+            t_view = dict(t)  # keep original count semantics (likely 0)
+            elem_size = self.sizeof(t_view.get("subtype")) or 1
+            count = t_view.get("count", 0)
             if count == 0:
-                count = (2**63 - 1) // elem_size
-                t["count"] = count
-
-            dummy_size = count * elem_size
-            dummy_name = f"__dummy_backend_{address}_{hash(str(t))}"
+                window_bytes = UNBOUNDED_ARRAY_MAX_BYTES
+                dummy_count = max(UNBOUNDED_ARRAY_MIN_ELEMS, window_bytes // elem_size)
+                t_dummy = dict(t_view)
+                t_dummy["count"] = dummy_count
+                dummy_size = dummy_count * elem_size
+            else:
+                t_dummy = t_view
+                dummy_size = count * elem_size
+            dummy_name = f"__dummy_backend_{address}_{hash(str(t_dummy))}"
             primary_isf_path = self._file_order[0]
-            
             self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
-                "kind": "struct", "size": dummy_size, "fields": {"arr": {"offset": 0, "type": t}}
+                "kind": "struct",
+                "size": dummy_size,
+                "fields": {"arr": {"offset": 0, "type": t_dummy}},
             }
             self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
 
