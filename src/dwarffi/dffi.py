@@ -226,7 +226,8 @@ class DFFI:
         """Calculates the byte size of a raw ISF type dictionary."""
         type_info = self._resolve_type_info(in_type_info)
         for f in self._file_order:
-            if res := self.vtypejsons[f].get_type_size(type_info):
+            res = self.vtypejsons[f].get_type_size(type_info)
+            if res is not None:
                 return res
         return 0
     
