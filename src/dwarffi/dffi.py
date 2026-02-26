@@ -188,7 +188,7 @@ class DFFI:
             sym = self.vtypejsons[path].get_symbol(name)
             if sym:
                 # Skip incomplete symbol definitions if they lack both address and type
-                if (not hasattr(sym, 'address') or sym.address in [None, 0]) and not getattr(sym, 'type_info', None):
+                if hasattr(sym, 'address') and sym.address in [None, 0]:
                     continue
                 return sym
         return None
