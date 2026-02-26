@@ -91,14 +91,18 @@ class DFFI:
     
     @property
     def symbols(self) -> Dict[str, Any]:
-        """Returns a dictionary of all symbols across all loaded ISF files."""
-        merged = {}
-        # Iterate reversed so earlier loaded ISFs correctly overwrite later ones (first-wins resolution)
-        for path in reversed(self._file_order):
-            for sym_name in self.vtypejsons[path]._raw_symbols.keys():
-                sym = self.get_symbol(sym_name)
-                if sym:
+        """Returns a dictionary of all symbols across all loaded ISF files (first-wins)."""
+        merged: Dict[str, Any] = {}
+        # First loaded wins => iterate in load order and don't overwrite.
+        for path in self._file_order:
+            vj = self.vtypejsons[path]
+            for sym_name in vj._raw_symbols.keys():
+                if sym_name in merged:
+                    continue
+                sym = self.get_symbol(sym_name, path=path, include_incomplete=True)
+                if sym is not None:
                     merged[sym_name] = sym
+
         return merged
 
     @property
@@ -177,22 +181,46 @@ class DFFI:
                 return res
         return None
 
-    def get_symbol(self, name: str) -> Optional[VtypeSymbol]:
+    def get_symbol(
+        self,
+        name: str,
+        path: Optional[str] = None,
+        *,
+        include_incomplete: bool = False,
+    ) -> Optional[VtypeSymbol]:
         """
-        Searches all loaded ISF files for the given symbol name.
-        
+        Searches loaded ISFs for a symbol.
+
         Args:
-            name: The symbol name to find.
-            
+            name: Symbol name to find.
+            path: If provided, search only that ISF key (must exist in self.vtypejsons).
+            include_incomplete: If True, return symbols even if address is None/0.
+                                If False, skip those entries unless they have type_info.
+
         Returns:
-            The first valid VtypeSymbol found, or None.
+            The first matching VtypeSymbol or None.
         """
-        for path in self._file_order:
-            sym = self.vtypejsons[path].get_symbol(name)
-            if sym:
-                # Skip incomplete symbol definitions if they lack both address and type
-                if hasattr(sym, 'address') and sym.address in [None, 0]:
-                    continue
+        def _is_acceptable(sym: VtypeSymbol) -> bool:
+            if include_incomplete:
+                return True
+            addr = getattr(sym, "address", None)
+            has_addr = addr not in (None, 0)
+            has_type = getattr(sym, "type_info", None) is not None
+            return has_addr or has_type
+
+        if path is not None:
+            vj = self.vtypejsons.get(path)
+            if vj is None:
+                raise KeyError(f"Unknown ISF path {path!r}. Known: {list(self.vtypejsons.keys())}")
+            sym = vj.get_symbol(name)
+            if sym and _is_acceptable(sym):
+                return sym
+            return None
+
+        # cross-ISF search
+        for p in self._file_order:
+            sym = self.vtypejsons[p].get_symbol(name)
+            if sym and _is_acceptable(sym):
                 return sym
         return None
     
