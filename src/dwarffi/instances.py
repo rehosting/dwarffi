@@ -222,6 +222,14 @@ class BoundTypeInstance:
     fields are accessed via attribute lookup. For base types and enums, values 
     can be accessed via indexing `inst[0]` or numeric casting `int(inst)`.
     """
+    __slots__ = ("_instance_type_name", 
+                 "_instance_type_def", 
+                 "_instance_buffer", 
+                 "_instance_vtype_accessor", 
+                 "_instance_offset", 
+                 "_instance_cache", 
+                 "_instance_unpack_struct", 
+                 "_instance_pack_struct")
 
     def __init__(
         self,
