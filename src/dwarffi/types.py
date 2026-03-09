@@ -227,31 +227,43 @@ class VtypeUserType:
             if f_data
         }
         self.kind: str = data.get("kind", "struct")
-        self._flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int]]] = None
+        self._flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]] = None
         self._aggregated_struct: Optional[struct.Struct] = None
 
-    def get_flattened_fields(self, vtype_accessor: Any) -> Dict[str, Tuple[VtypeStructField, int]]:
+    def get_flattened_fields(self, vtype_accessor: Any) -> Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]:
         """
         Builds and caches an O(1) lookup table for all fields.
-        
+        Returns a mapping of: field_name -> (field_def, absolute_offset, resolved_type_info, resolved_type_obj)
         This recursively flattens anonymous unions and structs so their fields
         can be accessed as if they were members of the parent.
         """
         if self._flattened_fields is not None:
             return self._flattened_fields
 
-        flattened: Dict[str, Tuple[VtypeStructField, int]] = {}
+        flattened: Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]] = {}
 
         def _flatten(t_def: VtypeUserType, current_offset: int):
             for name, field in t_def.fields.items():
+                # Pre-resolve typedefs and target type info
+                resolved_info = vtype_accessor._resolve_type_info(field.type_info)
+                kind = resolved_info.get("kind")
+                t_name = resolved_info.get("name")
+                
+                # Pre-fetch the concrete type object
+                resolved_obj = None
+                if kind == "base" and t_name:
+                    resolved_obj = vtype_accessor.get_base_type(t_name)
+                elif kind == "enum" and t_name:
+                    resolved_obj = vtype_accessor.get_enum(t_name)
+                elif kind in ("struct", "union") and t_name:
+                    resolved_obj = vtype_accessor.get_user_type(t_name)
+
                 if not field.anonymous:
-                    flattened[name] = (field, current_offset + field.offset)
+                    flattened[name] = (field, current_offset + field.offset, resolved_info, resolved_obj)
                 else:
                     # Resolve anonymous type and recurse
-                    sub_t_info = vtype_accessor._resolve_type_info(field.type_info)
-                    sub_t = vtype_accessor.get_type(sub_t_info.get("name"))
-                    if isinstance(sub_t, VtypeUserType):
-                        _flatten(sub_t, current_offset + field.offset)
+                    if isinstance(resolved_obj, VtypeUserType):
+                        _flatten(resolved_obj, current_offset + field.offset)
 
         _flatten(self, 0)
         self._flattened_fields = flattened
@@ -277,16 +289,18 @@ class VtypeUserType:
         fmt_string = "<" # Assume little endian for the block initially
         current_offset = 0
         
-        for field_def, abs_offset in sorted_fields:
+        # Unpack all 4 elements from the new cache tuple
+        for field_def, abs_offset, resolved_info, resolved_obj in sorted_fields:
             # Overlapping memory (unions) cannot be aggregated into a sequential Struct
             if abs_offset < current_offset:
                 return None
 
-            t_info = vtype_accessor._resolve_type_info(field_def.type_info)
-            if t_info.get("kind") != "base":
+            # Use the pre-resolved info
+            if resolved_info.get("kind") != "base":
                 return None 
                 
-            base_type = vtype_accessor.get_base_type(t_info.get("name"))
+            # Use the pre-resolved object
+            base_type = resolved_obj
             if not base_type:
                 return None
 

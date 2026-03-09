@@ -486,7 +486,7 @@ class DFFI:
             if field_name not in flat_fields:
                 raise KeyError(f"Type '{current_type.name}' has no field '{field_name}'")
 
-            field, field_offset = flat_fields[field_name]
+            field, field_offset, _, _ = flat_fields[field_name]
             offset += field_offset
 
             # Advance to the next type in the chain
@@ -534,8 +534,8 @@ class DFFI:
                 if field_name not in flat_fields:
                     break
                     
-                field_def, _ = flat_fields[field_name]
-                target_type_info = self._resolve_type_info(field_def.type_info)
+                _, _, resolved_info, _ = flat_fields[field_name]
+                target_type_info = resolved_info
                 
                 # If nested, continue the search in the next struct
                 if target_type_info.get("kind") in ["struct", "union"]:
@@ -1142,7 +1142,7 @@ class DFFI:
         sorted_fields = sorted(flat_fields.items(), key=lambda x: x[1][1])
 
         last_end = 0
-        for f_name, (f_def, abs_offset) in sorted_fields:
+        for f_name, (f_def, abs_offset, _, _) in sorted_fields:
             if abs_offset > last_end:
                 print(f"{last_end:<8} {abs_offset - last_end:<6} [PADDING]")
             
