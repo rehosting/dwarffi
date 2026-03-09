@@ -628,9 +628,6 @@ class BoundTypeInstance:
         Leverages O(1) flattened field lookups to support anonymous nested structs
         without recursive overhead.
         """
-        if name.startswith("_instance_") or name.startswith("__"):
-            return super().__getattribute__(name)
-
         if isinstance(self._instance_type_def, VtypeUserType):
             if name in self._instance_cache:
                 return self._instance_cache[name]
