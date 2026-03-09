@@ -90,6 +90,8 @@ class BoundArrayView:
         "_array_count",
         "_element_size",
         "_array_start_offset_in_parent",
+        "_array_resolved_info",
+        "_array_resolved_obj",
     )
 
     def __init__(
@@ -119,6 +121,17 @@ class BoundArrayView:
             raise ValueError(f"Cannot determine element size for array '{array_field_name}'.")
 
         self._array_start_offset_in_parent = array_start_offset_in_parent
+
+        self._array_resolved_info = parent_instance._instance_vtype_accessor._resolve_type_info(self._array_subtype_info)
+        kind = self._array_resolved_info.get("kind")
+        t_name = self._array_resolved_info.get("name")
+        self._array_resolved_obj = None
+        if kind == "base" and t_name:
+            self._array_resolved_obj = parent_instance._instance_vtype_accessor.get_base_type(t_name)
+        elif kind == "enum" and t_name:
+            self._array_resolved_obj = parent_instance._instance_vtype_accessor.get_enum(t_name)
+        elif kind in ("struct", "union") and t_name:
+            self._array_resolved_obj = parent_instance._instance_vtype_accessor.get_user_type(t_name)
 
     def _get_element_offset_in_parent_struct(self, index: int) -> int:
         """Calculates the absolute byte offset of an array element."""
@@ -156,7 +169,7 @@ class BoundArrayView:
 
         element_offset = self._get_element_offset_in_parent_struct(index)
         return self._parent_instance._read_data(
-            self._array_subtype_info, element_offset, f"{self._array_field_name}[{index}]"
+            self._array_resolved_info, self._array_resolved_obj, element_offset, f"{self._array_field_name}[{index}]"
         )
 
     def __setitem__(self, index: int, value: Any) -> None:
@@ -167,7 +180,7 @@ class BoundArrayView:
         """
         element_offset = self._get_element_offset_in_parent_struct(index)
         self._parent_instance._write_data(
-            self._array_subtype_info, element_offset, value, f"{self._array_field_name}[{index}]"
+            self._array_resolved_info, self._array_resolved_obj, element_offset, value, f"{self._array_field_name}[{index}]"
         )
         if self._array_field_name in self._parent_instance._instance_cache:
             del self._parent_instance._instance_cache[self._array_field_name]
@@ -419,17 +432,17 @@ class BoundTypeInstance:
 
     def _read_data(
         self,
-        in_field_type_info: Dict[str, Any],
+        resolved_info: Dict[str, Any],
+        resolved_obj: Any,
         field_offset_in_struct: int,
         field_name_for_error: str,
     ) -> Any:
-        field_type_info = self._instance_vtype_accessor._resolve_type_info(in_field_type_info)
-        kind = field_type_info.get("kind")
-        name = field_type_info.get("name")
+        kind = resolved_info.get("kind")
+        name = resolved_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct
 
         if kind == "base":
-            base_type_def = self._instance_vtype_accessor.get_base_type(name)
+            base_type_def = resolved_obj # Use cached object
             if base_type_def is None:
                 raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -443,15 +456,15 @@ class BoundTypeInstance:
                 raise KeyError("Base type 'pointer' not defined in loaded ISF files. Cannot read pointer field.")
             compiled_struct_obj = ptr_base_type.get_compiled_struct()
             address = self._instance_unpack_struct(compiled_struct_obj, absolute_field_offset)
-            return Ptr(address, field_type_info.get("subtype"), self._instance_vtype_accessor)
+            return Ptr(address, resolved_info.get("subtype"), self._instance_vtype_accessor)
 
         elif kind == "array":
             return BoundArrayView(
-                self, field_name_for_error, field_type_info, field_offset_in_struct
+                self, field_name_for_error, resolved_info, field_offset_in_struct
             )
 
         elif kind in ("struct", "union"):
-            user_type_def = self._instance_vtype_accessor.get_user_type(name)
+            user_type_def = resolved_obj # Use cached object
             if user_type_def is None:
                 raise KeyError(f"Struct/Union definition '{name}' for field '{field_name_for_error}' not found.")
             return BoundTypeInstance(
@@ -463,15 +476,15 @@ class BoundTypeInstance:
             )
 
         elif kind == "enum":
-            enum_def = self._instance_vtype_accessor.get_enum(name)
+            enum_def = resolved_obj # Use cached object
             compiled_struct_obj, _ = _get_enum_struct(enum_def, self._instance_vtype_accessor)
             int_val = self._instance_unpack_struct(compiled_struct_obj, absolute_field_offset)
             return EnumInstance(enum_def, int_val)
 
         elif kind == "bitfield":
-            bit_length = field_type_info.get("bit_length")
-            bit_position = field_type_info.get("bit_position")
-            underlying_base_name = field_type_info.get("type", {}).get("name")
+            bit_length = resolved_info.get("bit_length")
+            bit_position = resolved_info.get("bit_position")
+            underlying_base_name = resolved_info.get("type", {}).get("name")
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
             
@@ -493,7 +506,7 @@ class BoundTypeInstance:
             return val
 
         elif kind == "function":
-            return f"<FunctionType: {field_type_info.get('name', 'anon_func')}>"
+            return f"<FunctionType: {resolved_info.get('name', 'anon_func')}>"
         elif kind == "void" and name == "void":
             return None
         else:
@@ -503,18 +516,18 @@ class BoundTypeInstance:
 
     def _write_data(
         self,
-        in_field_type_info: Dict[str, Any],
+        resolved_info: Dict[str, Any],
+        resolved_obj: Any,
         field_offset_in_struct: int,
         value_to_write: Any,
         field_name_for_error: str,
     ):
-        field_type_info = self._instance_vtype_accessor._resolve_type_info(in_field_type_info)
-        kind = field_type_info.get("kind")
-        name = field_type_info.get("name")
+        kind = resolved_info.get("kind")
+        name = resolved_info.get("name")
         absolute_field_offset = self._instance_offset + field_offset_in_struct
 
         if kind == "base":
-            base_type_def = self._instance_vtype_accessor.get_base_type(name)
+            base_type_def = resolved_obj # Use cached object
             if base_type_def is None:
                 raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
@@ -553,7 +566,7 @@ class BoundTypeInstance:
             self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, address_to_write)
 
         elif kind == "enum":
-            enum_def = self._instance_vtype_accessor.get_enum(name)
+            enum_def = resolved_obj
             compiled_struct_obj, signed = _get_enum_struct(enum_def, self._instance_vtype_accessor)
 
             if isinstance(value_to_write, EnumInstance):
@@ -574,9 +587,9 @@ class BoundTypeInstance:
             self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, int_val_to_write)
 
         elif kind == "bitfield":
-            bit_length = field_type_info.get("bit_length")
-            bit_position = field_type_info.get("bit_position")
-            underlying_base_name = field_type_info.get("type").get("name")
+            bit_length = resolved_info.get("bit_length")
+            bit_position = resolved_info.get("bit_position")
+            underlying_base_name = resolved_info.get("type").get("name")
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
             
@@ -651,9 +664,9 @@ class BoundTypeInstance:
                     
                 raise AttributeError(error_msg)
 
-            field_def, field_offset = flat_fields[name]
+            field_def, field_offset, resolved_info, resolved_obj = flat_fields[name]
 
-            val = self._read_data(field_def.type_info, field_offset, name)
+            val = self._read_data(resolved_info, resolved_obj, field_offset, name)
             
             # Cache complex types (structs/arrays) to avoid repeated instantiation
             if field_def.type_info.get("kind") in ["struct", "union", "array"]:
@@ -680,13 +693,13 @@ class BoundTypeInstance:
                 super().__setattr__(name, new_value)
                 return
             
-            field_def, field_offset = flat_fields[name]
+            field_def, field_offset, resolved_info, resolved_obj = flat_fields[name]
             
             if field_def.type_info.get("kind") == "array":
                 raise NotImplementedError(
                     f"Direct assignment to array field '{name}' is not supported."
                 )
-            self._write_data(field_def.type_info, field_offset, new_value, name)
+            self._write_data(resolved_info, resolved_obj, field_offset, new_value, name)
             if name in self._instance_cache:
                 del self._instance_cache[name]
             return
