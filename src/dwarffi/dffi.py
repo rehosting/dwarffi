@@ -486,15 +486,14 @@ class DFFI:
             if field_name not in flat_fields:
                 raise KeyError(f"Type '{current_type.name}' has no field '{field_name}'")
 
-            field, field_offset, _, _ = flat_fields[field_name]
+            _, field_offset, resolved_info, resolved_obj = flat_fields[field_name]
             offset += field_offset
 
             # Advance to the next type in the chain
-            next_t_info = self._resolve_type_info(field.type_info)
-            if next_t_info.get("kind") in ["struct", "union"]:
-                current_type = self._typeof_or_raise(next_t_info.get("name"))
+            if resolved_info.get("kind") in ["struct", "union"]:
+                current_type = resolved_obj
             else:
-                current_type = next_t_info
+                current_type = resolved_info
 
         return offset
 
@@ -534,12 +533,12 @@ class DFFI:
                 if field_name not in flat_fields:
                     break
                     
-                _, _, resolved_info, _ = flat_fields[field_name]
+                _, _, resolved_info, resolved_obj = flat_fields[field_name]
                 target_type_info = resolved_info
                 
                 # If nested, continue the search in the next struct
                 if target_type_info.get("kind") in ["struct", "union"]:
-                    current_type = self._typeof_or_raise(target_type_info.get("name"))
+                    current_type = resolved_obj
                 else:
                     current_type = target_type_info
 

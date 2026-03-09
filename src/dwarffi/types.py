@@ -290,7 +290,7 @@ class VtypeUserType:
         current_offset = 0
         
         # Unpack all 4 elements from the new cache tuple
-        for field_def, abs_offset, resolved_info, resolved_obj in sorted_fields:
+        for _, abs_offset, resolved_info, resolved_obj in sorted_fields:
             # Overlapping memory (unions) cannot be aggregated into a sequential Struct
             if abs_offset < current_offset:
                 return None
