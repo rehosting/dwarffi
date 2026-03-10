@@ -15,7 +15,15 @@ MOCK_ISF = {
         "byte": {"kind": "int", "size": 1, "signed": False, "endian": "little"},
     },
     "user_types": {
-        # Scenario 1: Standard Linux-style intrusive linked list node
+        # Linked List types
+        "fast_entry": {
+            "kind": "struct", "size": 16,
+            "fields": {
+                "a": {"offset": 0, "type": {"kind": "base", "name": "long"}},
+                "b": {"offset": 8, "type": {"kind": "base", "name": "int"}},
+                "c": {"offset": 12, "type": {"kind": "base", "name": "int"}},
+            }
+        },
         "list_head": {
             "kind": "struct", "size": 16,
             "fields": {
@@ -32,7 +40,7 @@ MOCK_ISF = {
                 "flags": {"offset": 24, "type": {"kind": "base", "name": "long"}}
             }
         },
-        # Scenario 2: Network / IPC Ring Buffer entry
+        # Ring Buffer type
         "ring_entry": {
             "kind": "struct", "size": 64,
             "fields": {
@@ -42,7 +50,7 @@ MOCK_ISF = {
                 "data": {"offset": 16, "type": {"kind": "array", "count": 48, "subtype": {"kind": "base", "name": "byte"}}}
             }
         },
-        # Scenario 3: Hardware Page Table Entry (Bitfields)
+        # Bitfield type
         "pte_struct": {
             "kind": "struct", "size": 8,
             "fields": {
@@ -51,9 +59,21 @@ MOCK_ISF = {
                 "user": {"offset": 0, "type": {"kind": "bitfield", "bit_length": 1, "bit_position": 2, "type": {"name": "long"}}},
                 "pfn": {"offset": 0, "type": {"kind": "bitfield", "bit_length": 52, "bit_position": 12, "type": {"name": "long"}}}
             }
-        }
+        },
+        # Stress Test: Deep Nesting
+        "level_3": {"kind": "struct", "size": 4, "fields": {"val": {"offset": 0, "type": {"kind": "base", "name": "int"}}}},
+        "level_2": {"kind": "struct", "size": 4, "fields": {"l3": {"offset": 0, "type": {"kind": "struct", "name": "level_3"}}}},
+        "level_1": {"kind": "struct", "size": 4, "fields": {"l2": {"offset": 0, "type": {"kind": "struct", "name": "level_2"}}}},
+        "root_node": {"kind": "struct", "size": 4, "fields": {"l1": {"offset": 0, "type": {"kind": "struct", "name": "level_1"}}}},
     },
-    "enums": {}, "symbols": {}, "typedefs": {}
+    "enums": {}, 
+    "symbols": {}, 
+    "typedefs": {
+        "type_c": {"kind": "base", "name": "int"},
+        "type_b": {"kind": "typedef", "name": "type_c"},
+        "type_a": {"kind": "typedef", "name": "type_b"},
+        "final_t": {"kind": "typedef", "name": "type_a"},
+    }
 }
 
 # ---------------------------------------------------------
@@ -113,7 +133,7 @@ def bench_linked_list_walk(num_nodes: int = 250_000):
 # Workload 2: High-Throughput Array iteration
 # Stresses: BoundArrayView, __getitem__, primitive base types
 # ---------------------------------------------------------
-def bench_ring_buffer_scan(ffi: DFFI, num_entries: int = 500_000):
+def bench_ring_buffer_scan(ffi, num_entries=500_000):
     print(f"--- Running Ring Buffer Array Scan ({num_entries} entries) ---")
     entry_size = ffi.sizeof("struct ring_entry")
     buf = bytearray(entry_size * num_entries)
@@ -133,18 +153,18 @@ def bench_ring_buffer_scan(ffi: DFFI, num_entries: int = 500_000):
     # Iterate using python loops over the C-Array view
     for i in range(num_entries):
         entry = ring[i]
-        if entry.magic == 0xDEADBEEF:
+        if entry.magic == 0x7EADBEEF:
             valid_packets += 1
             total_payload_size += entry.size
             
     end_t = time.perf_counter()
-    print(f"Done in {end_t - start_t:.4f}s (Valid: {valid_packets}, Total Data: {total_payload_size})\n")
+    print(f"Done in {end_t - start_t:.4f}s (Valid: {valid_packets}, Data: {total_payload_size})\n")
 
 # ---------------------------------------------------------
 # Workload 3: Bitfield Thrashing
 # Stresses: __setattr__, bitfield packing/unpacking math, wrapping
 # ---------------------------------------------------------
-def bench_bitfield_mutations(ffi: DFFI, iterations: int = 300_000):
+def bench_bitfield_mutations(ffi, iterations=300_000):
     print(f"--- Running Bitfield Thrashing ({iterations} loops) ---")
     buf = bytearray(8)
     pte = ffi.from_buffer("struct pte_struct", buf)
@@ -163,6 +183,63 @@ def bench_bitfield_mutations(ffi: DFFI, iterations: int = 300_000):
     end_t = time.perf_counter()
     print(f"Done in {end_t - start_t:.4f}s (Final PFN: {pte.pfn})\n")
 
+# ---------------------------------------------------------
+# Workload 4: Deeply Nested Member Access
+# ---------------------------------------------------------
+def bench_deep_nesting(ffi, iterations=500_000):
+    print(f"--- Running Deep Nesting stress ({iterations} iterations) ---")
+    buf = bytearray(4)
+    root = ffi.from_buffer("struct root_node", buf)
+    
+    start_t = time.perf_counter()
+    for i in range(iterations):
+        root.l1.l2.l3.val = i
+        _ = root.l1.l2.l3.val
+    end_t = time.perf_counter()
+    print(f"Done in {end_t - start_t:.4f}s\n")
+
+# ---------------------------------------------------------
+# Workload 5: Mass Type Resolution
+# ---------------------------------------------------------
+def bench_type_resolution_storm(ffi, iterations=100_000):
+    print(f"--- Running Type Resolution Storm ({iterations} iterations) ---")
+    start_t = time.perf_counter()
+    for _ in range(iterations):
+        _ = ffi.cast("final_t", 0x1234)
+        _ = ffi.sizeof("struct ring_entry")
+    end_t = time.perf_counter()
+    print(f"Done in {end_t - start_t:.4f}s\n")
+
+# ---------------------------------------------------------
+# Workload 6: Bulk Memory Unpacking
+# ---------------------------------------------------------
+def bench_bulk_unpack(ffi, iterations=50_000):
+    print(f"--- Running Bulk Unpack stress ({iterations} iterations) ---")
+    buf = bytearray(64)
+    entry = ffi.from_buffer("struct fast_entry", buf)
+    
+    start_t = time.perf_counter()
+    for _ in range(iterations):
+        _ = ffi.unpack(entry)
+    end_t = time.perf_counter()
+    print(f"Done in {end_t - start_t:.4f}s\n")
+
+# ---------------------------------------------------------
+# Workload 7: Live Memory Proxy Overhead
+# ---------------------------------------------------------
+def bench_proxy_overhead(iterations=500_000):
+    print(f"--- Running Proxy Backend stress ({iterations} iterations) ---")
+    remote_storage = bytearray(1024)
+    ffi = DFFI(MOCK_ISF, backend=remote_storage)
+    proxy_struct = ffi.from_address("struct ring_entry", 0x100)
+    
+    start_t = time.perf_counter()
+    for i in range(iterations):
+        proxy_struct.timestamp = i
+        _ = proxy_struct.magic
+    end_t = time.perf_counter()
+    print(f"Done in {end_t - start_t:.4f}s\n")
+
 if __name__ == "__main__":
     # We can use a backend-less FFI for scenarios 2 and 3, which just use from_buffer
     global_ffi = DFFI(MOCK_ISF)
@@ -171,3 +248,7 @@ if __name__ == "__main__":
     bench_linked_list_walk()
     bench_ring_buffer_scan(global_ffi)
     bench_bitfield_mutations(global_ffi)
+    bench_deep_nesting(global_ffi)
+    bench_type_resolution_storm(global_ffi)
+    bench_bulk_unpack(global_ffi)
+    bench_proxy_overhead()
