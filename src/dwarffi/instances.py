@@ -724,9 +724,52 @@ class BoundTypeInstance:
             _, field_offset, resolved_info, resolved_obj = flat_fields[name]
             
             if resolved_info["kind"] == "array":
-                raise NotImplementedError(
-                    f"Direct assignment to array field '{name}' is not supported."
-                )
+                # Allow direct assignment only for byte/char arrays
+                if isinstance(new_value, str):
+                    data = new_value.encode("utf-8")
+                elif isinstance(new_value, (bytes, bytearray, memoryview)):
+                    data = bytes(new_value)
+                else:
+                    raise NotImplementedError(
+                        f"Direct assignment to array field '{name}' is not supported."
+                    )
+
+                # Resolve element type and ensure it's 1 byte
+                subtype_info = resolved_info.get("subtype")
+                if subtype_info is None:
+                    raise ValueError(f"Array field '{name}' missing subtype info.")
+
+                elem_size = self._instance_vtype_accessor.get_type_size(subtype_info)
+                if elem_size != 1:
+                    raise NotImplementedError(
+                        f"Direct assignment to non-byte array field '{name}' is not supported."
+                    )
+
+                count = resolved_info.get("count", 0)
+                if count <= 0:
+                    return
+
+                # Compute array start in underlying buffer
+                start = self._instance_offset + field_offset
+                end = start + count
+
+                # Write like a C string: truncate, NUL-terminate, zero-fill
+                buf = self._instance_buffer
+                mv = memoryview(buf)
+
+                # zero-fill
+                mv[start:end] = b"\x00" * count
+
+                # copy payload
+                payload = data[: max(0, count - 1)]
+                mv[start : start + len(payload)] = payload
+
+                # Invalidate cache for this field if present
+                try:
+                    del self._instance_cache[name]
+                except KeyError:
+                    pass
+                return
             self._write_data(resolved_info, resolved_obj, field_offset, new_value, name)
             
             # Try/except is faster than checking 'in' for cache invalidation
