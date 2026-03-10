@@ -76,7 +76,65 @@ NOTE: Some compilers may optimize away unused debug types. For example, with `gc
 
 # 🛠️ Quick Start
 
-## 1️⃣ CFFI-style `cdef`
+## Load an ISF (Linux/ELF DWARF)
+
+```python
+from dwarffi import DFFI
+
+# Accepts .json or .json.xz
+ffi = DFFI("ubuntu:5.4.0-26-generic:64.json.xz")
+
+
+list_head_type = ffi.typeof("list_head")
+print("list_head sizeof:", ffi.sizeof(list_head_type))
+print(list_head_type)
+
+''' prints out:
+struct list_head (size: 16 bytes) {
+  [+0  ] pointer next;
+  [+8  ] pointer prev;
+}
+'''
+
+# make a new complex type
+proc = ffi.new("struct task_struct", init={"pid": 1234, "comm": b"my_process"})
+
+
+print(proc.pid)              # 1234
+print(bytes(proc.comm))      # b'my_process\x00\x00\x00\x00\x00\x00'
+print(ffi.string(proc.comm)) # b'my_process'
+```
+
+Download this example .json.xz [here](https://panda.re/volatility3_profiles/ubuntu:5.4.0-26-generic:64.json.xz).
+
+---
+
+## Load an ISF (Windows PDB-derived / Volatility-style)
+
+```python
+from dwarffi import DFFI
+
+# Volatility-style Windows symbols are typically .json.xz ISFs
+ffi = DFFI("ntkrnlmp.pdb/<GUID>-<AGE>.json.xz")
+
+le = ffi.typeof("struct _LIST_ENTRY")
+buf = bytearray(ffi.sizeof(le))
+inst = ffi.from_buffer("struct _LIST_ENTRY", buf)
+
+inst.Flink = 0x1122334455667788
+inst.Blink = 0x8877665544332211
+
+print(ffi.pretty_print(inst))
+print(ffi.to_dict(inst))
+
+ffi.inspect_layout("struct _UNICODE_STRING")
+```
+
+---
+
+## CFFI-style `cdef`
+
+We do support inline C definitions that compile down to DWARF and ISF on the fly. This is ideal for quick prototyping or when you have a small struct definition that isn't already in your ISF.
 
 ```python
 from dwarffi import DFFI
@@ -99,47 +157,8 @@ sensor = ffi.new("struct sensor_data", {
 print(f"Bytes: {ffi.to_bytes(sensor).hex()}")
 print(f"Reading[1]: {sensor.readings[1]}")  # -5
 ```
-
 ---
 
-## 2️⃣ Load an ISF (Linux/ELF DWARF)
-
-```python
-from dwarffi import DFFI
-
-# Accepts .json or .json.xz
-ffi = DFFI("vmlinux_isf.json.xz")
-
-task = ffi.typeof("struct task_struct")
-print("task_struct sizeof:", ffi.sizeof(task))
-
-ffi.inspect_layout("struct task_struct")
-```
-
----
-
-## 3️⃣ Load an ISF (Windows PDB-derived / Volatility-style)
-
-```python
-from dwarffi import DFFI
-
-# Volatility-style Windows symbols are typically .json.xz ISFs
-ffi = DFFI("ntkrnlmp.pdb/<GUID>-<AGE>.json.xz")
-
-le = ffi.typeof("struct _LIST_ENTRY")
-buf = bytearray(ffi.sizeof(le))
-inst = ffi.from_buffer("struct _LIST_ENTRY", buf)
-
-inst.Flink = 0x1122334455667788
-inst.Blink = 0x8877665544332211
-
-print(ffi.pretty_print(inst))
-print(ffi.to_dict(inst))
-
-ffi.inspect_layout("struct _UNICODE_STRING")
-```
-
----
 
 # 🧩 Advanced Usage
 
