@@ -253,7 +253,7 @@ class BoundTypeInstance:
         instance_offset_in_buffer: int = 0,
     ):
         if not isinstance(buffer, (bytearray, memoryview)):
-            if not hasattr(buffer, "backend"):
+            if getattr(buffer, "backend", None) is None:
                 raise TypeError("Internal Error: BoundTypeInstance expects a bytearray, memoryview, or MemoryBackend.")
         self._instance_type_name = type_name
         self._instance_type_def = type_def

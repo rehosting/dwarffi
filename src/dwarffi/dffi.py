@@ -280,7 +280,7 @@ class DFFI:
         """
         if isinstance(buffer, bytes):
             processed_buffer = bytearray(buffer)
-        elif isinstance(buffer, (bytearray, memoryview)) or hasattr(buffer, "__getitem__"):
+        elif isinstance(buffer, (bytearray, memoryview)) or getattr(type(buffer), "__getitem__", None) is not None:
             processed_buffer = buffer
         else:
             raise TypeError("Input buffer must be bytes, bytearray, memoryview, or support __getitem__.")
@@ -302,7 +302,7 @@ class DFFI:
                 raise ValueError(f"Type definition for '{type_name}' lacks a valid size.")
 
         # Bounds checking (skip if using a duck-typed backend proxy)
-        if type_def.size is not None and not hasattr(processed_buffer, "backend"):
+        if type_def.size is not None and getattr(processed_buffer, "backend", None) is None:
             effective_len = len(processed_buffer) - instance_offset_in_buffer
             if type_def.size > effective_len:
                 raise ValueError(
