@@ -133,14 +133,6 @@ class BoundArrayView:
         elif kind in ("struct", "union") and t_name:
             self._array_resolved_obj = parent_instance._instance_vtype_accessor.get_user_type(t_name)
 
-    def _get_element_offset_in_parent_struct(self, index: int) -> int:
-        """Calculates the absolute byte offset of an array element."""
-        if not 0 <= index < self._array_count:
-            raise IndexError(
-                f"Array index {index} out of bounds for array '{self._array_field_name}' of size {self._array_count}."
-            )
-        return self._array_start_offset_in_parent + (index * self._element_size)
-
     def __bytes__(self) -> bytes:
         """
         Returns an immutable byte snapshot of the entire array.
@@ -157,20 +149,20 @@ class BoundArrayView:
         Indices are bounds-checked. Complex subtypes (structs/unions) are returned 
         as BoundTypeInstances sharing the same memory buffer.
         """
+        # Fast path for standard integer indexing
+        if type(index) is int:
+            if index < 0 or index >= self._array_count:
+                raise IndexError(f"Index {index} out of bounds for array of size {self._array_count}")
+            element_offset = self._array_start_offset_in_parent + (index * self._element_size)
+            return self._parent_instance._read_data(
+                self._array_resolved_info, self._array_resolved_obj, element_offset, f"{self._array_field_name}[{index}]"
+            )
+
         if isinstance(index, slice):
             start, stop, step = index.indices(self._array_count)
             return [self[i] for i in range(start, stop, step)]
 
-        if not isinstance(index, int):
-            raise TypeError(f"Array indices must be integers or slices, not {type(index).__name__}")
-
-        if index < 0 or index >= self._array_count:
-            raise IndexError(f"Index {index} is out of bounds for array of size {self._array_count}")
-
-        element_offset = self._get_element_offset_in_parent_struct(index)
-        return self._parent_instance._read_data(
-            self._array_resolved_info, self._array_resolved_obj, element_offset, f"{self._array_field_name}[{index}]"
-        )
+        raise TypeError(f"Array indices must be integers or slices, not {type(index).__name__}")
 
     def __setitem__(self, index: int, value: Any) -> None:
         """
@@ -178,12 +170,20 @@ class BoundArrayView:
         
         Clears the parent instance's cache for this field to ensure consistency.
         """
-        element_offset = self._get_element_offset_in_parent_struct(index)
-        self._parent_instance._write_data(
-            self._array_resolved_info, self._array_resolved_obj, element_offset, value, f"{self._array_field_name}[{index}]"
-        )
-        if self._array_field_name in self._parent_instance._instance_cache:
-            del self._parent_instance._instance_cache[self._array_field_name]
+        if type(index) is int:
+            if index < 0 or index >= self._array_count:
+                raise IndexError(f"Index {index} out of bounds for array of size {self._array_count}")
+                
+            element_offset = self._array_start_offset_in_parent + (index * self._element_size)
+            self._parent_instance._write_data(
+                self._array_resolved_info, self._array_resolved_obj, element_offset, value, f"{self._array_field_name}[{index}]"
+            )
+            try:
+                del self._parent_instance._instance_cache[self._array_field_name]
+            except KeyError:
+                pass
+            return
+        raise TypeError("Array assignment requires an integer index.")
 
     def __len__(self) -> int:
         """Returns the number of elements in the array."""
@@ -241,6 +241,7 @@ class BoundTypeInstance:
                  "_instance_vtype_accessor", 
                  "_instance_offset", 
                  "_instance_cache", 
+                 "_flat_fields",
                  "_instance_unpack_struct", 
                  "_instance_pack_struct")
 
@@ -264,6 +265,9 @@ class BoundTypeInstance:
         object.__setattr__(self, "_instance_offset", instance_offset_in_buffer)
         object.__setattr__(self, "_instance_cache", {})
         
+        # Lazy loading: Initialize to None to defer lookup overhead
+        object.__setattr__(self, "_flat_fields", None)
+
         if getattr(buffer, "backend", None) is not None:
             object.__setattr__(self, "_instance_unpack_struct", self._instance_unpack_proxy)
             object.__setattr__(self, "_instance_pack_struct", self._instance_pack_proxy)
@@ -294,6 +298,7 @@ class BoundTypeInstance:
             data = bytearray(compiled_struct_obj.size)
             compiled_struct_obj.pack_into(data, 0, value)
         self._instance_buffer[offset : offset + compiled_struct_obj.size] = data
+
     def _get_value(self) -> Any:
         """Internal: Deserializes the value if this is a base type or enum."""
         if isinstance(self._instance_type_def, VtypeUserType):
@@ -440,13 +445,13 @@ class BoundTypeInstance:
         field_offset_in_struct: int,
         field_name_for_error: str,
     ) -> Any:
-        kind = resolved_info.get("kind")
-        name = resolved_info.get("name")
+        kind = resolved_info["kind"]
         absolute_field_offset = self._instance_offset + field_offset_in_struct
 
         if kind == "base":
             base_type_def = resolved_obj # Use cached object
             if base_type_def is None:
+                name = resolved_info.get("name", "unknown")
                 raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if base_type_def.size == 0:
@@ -469,9 +474,10 @@ class BoundTypeInstance:
         elif kind in ("struct", "union"):
             user_type_def = resolved_obj # Use cached object
             if user_type_def is None:
+                name = resolved_info.get("name", "unknown")
                 raise KeyError(f"Struct/Union definition '{name}' for field '{field_name_for_error}' not found.")
             return BoundTypeInstance(
-                name,
+                resolved_info.get("name", "anonymous"),
                 user_type_def,
                 self._instance_buffer,
                 self._instance_vtype_accessor,
@@ -485,9 +491,9 @@ class BoundTypeInstance:
             return EnumInstance(enum_def, int_val)
 
         elif kind == "bitfield":
-            bit_length = resolved_info.get("bit_length")
-            bit_position = resolved_info.get("bit_position")
-            underlying_base_name = resolved_info.get("type", {}).get("name")
+            bit_length = resolved_info["bit_length"]
+            bit_position = resolved_info["bit_position"]
+            underlying_base_name = resolved_info["type"]["name"]
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
             
@@ -510,7 +516,7 @@ class BoundTypeInstance:
 
         elif kind == "function":
             return f"<FunctionType: {resolved_info.get('name', 'anon_func')}>"
-        elif kind == "void" and name == "void":
+        elif kind == "void":
             return None
         else:
             raise ValueError(
@@ -525,13 +531,13 @@ class BoundTypeInstance:
         value_to_write: Any,
         field_name_for_error: str,
     ):
-        kind = resolved_info.get("kind")
-        name = resolved_info.get("name")
+        kind = resolved_info["kind"]
         absolute_field_offset = self._instance_offset + field_offset_in_struct
 
         if kind == "base":
-            base_type_def = resolved_obj # Use cached object
+            base_type_def = resolved_obj
             if base_type_def is None:
+                name = resolved_info.get("name", "unknown")
                 raise KeyError(f"Required base type '{name}' for field '{field_name_for_error}' not found.")
             compiled_struct_obj = base_type_def.get_compiled_struct()
             if base_type_def.size == 0:
@@ -590,9 +596,9 @@ class BoundTypeInstance:
             self._instance_pack_struct(compiled_struct_obj, absolute_field_offset, int_val_to_write)
 
         elif kind == "bitfield":
-            bit_length = resolved_info.get("bit_length")
-            bit_position = resolved_info.get("bit_position")
-            underlying_base_name = resolved_info.get("type").get("name")
+            bit_length = resolved_info["bit_length"]
+            bit_position = resolved_info["bit_position"]
+            underlying_base_name = resolved_info["type"]["name"]
             underlying_base_def = self._instance_vtype_accessor.get_base_type(underlying_base_name)
             compiled_struct_obj = underlying_base_def.get_compiled_struct()
             
@@ -656,29 +662,36 @@ class BoundTypeInstance:
         if name[0] == '_' and (name.startswith('_instance_') or name.startswith('__')):
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
-        if type(self._instance_type_def) is VtypeUserType:
+        # Lazy Evaluation Core: Only resolve flat_fields on the FIRST actual field access
+        flat_fields = self._flat_fields
+        if flat_fields is None:
+            if type(self._instance_type_def) is VtypeUserType:
+                flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
+            else:
+                # Use False as a fast sentinel value so we know it's not a struct,
+                # while an empty struct dictionary {} remains distinguishable.
+                flat_fields = False
+            object.__setattr__(self, "_flat_fields", flat_fields)
+
+        # Check 'is not False' because an empty struct dict '{}' evaluates to False in python
+        if flat_fields is not False:
             if name in self._instance_cache:
                 return self._instance_cache[name]
 
-            flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
-            if name not in flat_fields:
-                error_msg = f"'{self._instance_type_name}' has no attribute '{name}'"
+            if name in flat_fields:
+                _, field_offset, resolved_info, resolved_obj = flat_fields[name]
+                val = self._read_data(resolved_info, resolved_obj, field_offset, name)
                 
-                # Smart error suggestion
-                matches = difflib.get_close_matches(name, flat_fields.keys(), n=1, cutoff=0.6)
-                if matches:
-                    error_msg += f". Did you mean '{matches[0]}'?"
-                    
-                raise AttributeError(error_msg)
+                if resolved_info["kind"] in ("struct", "union", "array"):
+                    self._instance_cache[name] = val
+                return val
 
-            field_def, field_offset, resolved_info, resolved_obj = flat_fields[name]
-
-            val = self._read_data(resolved_info, resolved_obj, field_offset, name)
-            
-            # Cache complex types (structs/arrays) to avoid repeated instantiation
-            if field_def.type_info.get("kind") in ("struct", "union", "array"):
-                self._instance_cache[name] = val
-            return val
+            error_msg = f"'{self._instance_type_name}' has no attribute '{name}'"
+            matches = difflib.get_close_matches(name, flat_fields.keys(), n=1, cutoff=0.6)
+            if matches:
+                error_msg += f". Did you mean '{matches[0]}'?"
+                
+            raise AttributeError(error_msg)
 
         raise AttributeError(
             f"Type '{self._instance_type_name}' has no attribute '{name}'. Use '[0]' or cast for base/enum types."
@@ -694,15 +707,23 @@ class BoundTypeInstance:
             object.__setattr__(self, name, new_value)
             return
 
-        if type(self._instance_type_def) is VtypeUserType:
-            flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
+        # Lazy Evaluation Core
+        flat_fields = self._flat_fields
+        if flat_fields is None:
+            if type(self._instance_type_def) is VtypeUserType:
+                flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
+            else:
+                flat_fields = False
+            object.__setattr__(self, "_flat_fields", flat_fields)
+
+        if flat_fields is not False:
             if name not in flat_fields:
                 object.__setattr__(self, name, new_value)
                 return
             
-            field_def, field_offset, resolved_info, resolved_obj = flat_fields[name]
+            _, field_offset, resolved_info, resolved_obj = flat_fields[name]
             
-            if field_def.type_info.get("kind") == "array":
+            if resolved_info["kind"] == "array":
                 raise NotImplementedError(
                     f"Direct assignment to array field '{name}' is not supported."
                 )
