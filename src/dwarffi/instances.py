@@ -255,18 +255,21 @@ class BoundTypeInstance:
         if not isinstance(buffer, (bytearray, memoryview)):
             if getattr(buffer, "backend", None) is None:
                 raise TypeError("Internal Error: BoundTypeInstance expects a bytearray, memoryview, or MemoryBackend.")
-        self._instance_type_name = type_name
-        self._instance_type_def = type_def
-        self._instance_buffer = buffer
-        self._instance_vtype_accessor = vtype_accessor
-        self._instance_offset = instance_offset_in_buffer
-        self._instance_cache: Dict[str, Any] = {}
-        if hasattr(buffer, "backend"):
-            self._instance_unpack_struct = self._instance_unpack_proxy
-            self._instance_pack_struct = self._instance_pack_proxy
+        
+        # Fast initialization bypassing __setattr__ completely to prevent recursion
+        object.__setattr__(self, "_instance_type_name", type_name)
+        object.__setattr__(self, "_instance_type_def", type_def)
+        object.__setattr__(self, "_instance_buffer", buffer)
+        object.__setattr__(self, "_instance_vtype_accessor", vtype_accessor)
+        object.__setattr__(self, "_instance_offset", instance_offset_in_buffer)
+        object.__setattr__(self, "_instance_cache", {})
+        
+        if getattr(buffer, "backend", None) is not None:
+            object.__setattr__(self, "_instance_unpack_struct", self._instance_unpack_proxy)
+            object.__setattr__(self, "_instance_pack_struct", self._instance_pack_proxy)
         else:
-            self._instance_unpack_struct = self._instance_unpack_native
-            self._instance_pack_struct = self._instance_pack_native
+            object.__setattr__(self, "_instance_unpack_struct", self._instance_unpack_native)
+            object.__setattr__(self, "_instance_pack_struct", self._instance_pack_native)
 
     def _instance_unpack_native(self, compiled_struct_obj: Any, offset: int) -> Any:
         """Fast path: Zero-copy native buffer read."""
@@ -649,7 +652,11 @@ class BoundTypeInstance:
         Leverages O(1) flattened field lookups to support anonymous nested structs
         without recursive overhead.
         """
-        if isinstance(self._instance_type_def, VtypeUserType):
+        # Block recursion and handle python dunders gracefully
+        if name[0] == '_' and (name.startswith('_instance_') or name.startswith('__')):
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+        if type(self._instance_type_def) is VtypeUserType:
             if name in self._instance_cache:
                 return self._instance_cache[name]
 
@@ -669,7 +676,7 @@ class BoundTypeInstance:
             val = self._read_data(resolved_info, resolved_obj, field_offset, name)
             
             # Cache complex types (structs/arrays) to avoid repeated instantiation
-            if field_def.type_info.get("kind") in ["struct", "union", "array"]:
+            if field_def.type_info.get("kind") in ("struct", "union", "array"):
                 self._instance_cache[name] = val
             return val
 
@@ -683,14 +690,14 @@ class BoundTypeInstance:
         
         Updates the underlying buffer and invalidates relevant caches.
         """
-        if name.startswith("_instance_") or name.startswith("__"):
-            super().__setattr__(name, new_value)
+        if name[0] == '_' and (name.startswith('_instance_') or name.startswith('__')):
+            object.__setattr__(self, name, new_value)
             return
 
-        if isinstance(self._instance_type_def, VtypeUserType):
+        if type(self._instance_type_def) is VtypeUserType:
             flat_fields = self._instance_type_def.get_flattened_fields(self._instance_vtype_accessor)
             if name not in flat_fields:
-                super().__setattr__(name, new_value)
+                object.__setattr__(self, name, new_value)
                 return
             
             field_def, field_offset, resolved_info, resolved_obj = flat_fields[name]
@@ -700,8 +707,12 @@ class BoundTypeInstance:
                     f"Direct assignment to array field '{name}' is not supported."
                 )
             self._write_data(resolved_info, resolved_obj, field_offset, new_value, name)
-            if name in self._instance_cache:
+            
+            # Try/except is faster than checking 'in' for cache invalidation
+            try:
                 del self._instance_cache[name]
+            except KeyError:
+                pass
             return
 
         raise AttributeError(
