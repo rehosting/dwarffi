@@ -333,3 +333,109 @@ def test_buffer_sharing_and_offsets(ffi_env):
     
     task2_manual.pid = 303
     assert task2.pid == 303
+
+def test_addressof_with_base_address(ffi_env):
+    """
+    Ensures that when a struct is created from an isolated buffer snapshot 
+    with a known absolute base memory address, addressof() correctly calculates 
+    the absolute pointers of nested fields.
+    """
+    absolute_kernel_addr = 0xffffffff81000000
+    snapshot_buf = bytearray(16)
+    
+    task = ffi_env.from_buffer(
+        "struct task_struct", 
+        snapshot_buf, 
+        offset=0, 
+        address=absolute_kernel_addr
+    )
+    
+    # Test base struct address
+    task_ptr = ffi_env.addressof(task)
+    assert task_ptr.address == absolute_kernel_addr
+    
+    # Test nested field address calculation (state is at offset 4)
+    state_ptr = ffi_env.addressof(task, "state")
+    assert state_ptr.address == absolute_kernel_addr + 4
+
+def test_addressof_comprehensive_base_addresses(ffi_env):
+    """
+    Exhaustively tests that `_base_address` correctly propagates through root structs,
+    primitives, deeply nested fields, extracted instances, and array pointer decay.
+    """
+    # 1. Define a complex layout
+    isf = {
+        "metadata": {},
+        "base_types": {
+            "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+            "short": {"kind": "int", "size": 2, "signed": True, "endian": "little"},
+        },
+        "user_types": {
+            "inner": {
+                "kind": "struct", "size": 8,
+                "fields": {
+                    "a": {"offset": 0, "type": {"kind": "base", "name": "short"}},
+                    "b": {"offset": 4, "type": {"kind": "base", "name": "int"}}
+                }
+            },
+            "outer": {
+                "kind": "struct", "size": 24,
+                "fields": {
+                    "id": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "nested": {"offset": 4, "type": {"kind": "struct", "name": "inner"}},
+                    "arr": {"offset": 12, "type": {"kind": "array", "count": 3, "subtype": {"kind": "base", "name": "int"}}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}
+    }
+    ffi_env.load_isf(isf)
+
+    base_kaddr = 0xffff888000001000
+    buf = bytearray(32)
+
+    # --- TEST 1: PRIMITIVE NON-STRUCT TYPES ---
+    # When binding a primitive integer, addressof should perfectly wrap it
+    int_inst = ffi_env.from_buffer("int", buf, offset=8, address=base_kaddr)
+    ptr_int = ffi_env.addressof(int_inst)
+    assert ptr_int.address == base_kaddr + 8
+    assert ptr_int.points_to_type_name == "int"
+
+    # --- TEST 2: ROOT STRUCT AND DIRECT FIELDS ---
+    outer_inst = ffi_env.from_buffer("struct outer", buf, offset=0, address=base_kaddr)
+    
+    # Base address of the struct
+    assert ffi_env.addressof(outer_inst).address == base_kaddr
+    
+    # Direct field offset ('id' @ offset 0)
+    assert ffi_env.addressof(outer_inst, "id").address == base_kaddr + 0
+
+    # --- TEST 3: DEEP NESTED STRUCT OFFSETS ---
+    # Nested struct field ('nested' @ offset 4)
+    assert ffi_env.addressof(outer_inst, "nested").address == base_kaddr + 4
+
+    # Deeply nested field ('nested.b' @ offset 4 + 4 = 8)
+    assert ffi_env.addressof(outer_inst, "nested", "b").address == base_kaddr + 8
+
+    # --- TEST 4: INHERITED ADDRESSES (EXTRACTED INSTANCES) ---
+    # When you extract a nested struct via attribute access, dwarffi generates a new 
+    # BoundTypeInstance. It must inherently "remember" the global address!
+    nested_inst = outer_inst.nested
+    assert ffi_env.addressof(nested_inst).address == base_kaddr + 4
+    assert ffi_env.addressof(nested_inst, "b").address == base_kaddr + 8
+
+    # --- TEST 5: ARRAY TYPES AND POINTER DECAY ---
+    # Arrays return a BoundArrayView. We get their address via C-style pointer arithmetic.
+    
+    # 5a. Embedded array decay
+    embedded_arr = outer_inst.arr
+    assert (embedded_arr + 0).address == base_kaddr + 12
+    # The 2nd element is at offset 12 + (2 * 4 bytes) = 20
+    assert (embedded_arr + 2).address == base_kaddr + 20 
+
+    # 5b. Dynamic standalone array from buffer
+    dyn_arr_addr = 0xdeadbeef0000
+    # Use int[5] (20 bytes) so it safely fits in our 32-byte buffer
+    dyn_arr = ffi_env.from_buffer("int[5]", buf, address=dyn_arr_addr)
+    assert (dyn_arr + 0).address == dyn_arr_addr
+    assert (dyn_arr + 4).address == dyn_arr_addr + 16
