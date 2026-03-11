@@ -204,9 +204,7 @@ class DFFI:
             if include_incomplete:
                 return True
             addr = getattr(sym, "address", None)
-            has_addr = addr not in (None, 0)
-            has_type = getattr(sym, "type_info", None) is not None
-            return has_addr or has_type
+            return addr not in (None, 0)
 
         if path is not None:
             vj = self.vtypejsons.get(path)
