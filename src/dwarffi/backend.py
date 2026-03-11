@@ -11,7 +11,10 @@ class MemoryBackend:
 
 class BytesBackend(MemoryBackend):
     def __init__(self, data: Union[bytes, bytearray]):
-        self._data = bytearray(data)
+        if isinstance(data, bytearray):
+            self._data = data
+        else:
+            self._data = bytearray(data)
         self._size = len(self._data)
 
     def read(self, address: int, size: int) -> bytes:
