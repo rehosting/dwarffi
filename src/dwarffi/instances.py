@@ -3,6 +3,7 @@ import struct
 from typing import Any, Dict, Iterator, Optional, Tuple, Union
 
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
+from .backend import LiveMemoryProxy
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
@@ -249,14 +250,19 @@ class BoundTypeInstance:
         self,
         type_name: str,
         type_def: Union[VtypeUserType, VtypeBaseType, VtypeEnum],
-        buffer: Union[bytearray, memoryview],
+        buffer: Union[bytearray, memoryview, LiveMemoryProxy],
         vtype_accessor: Any,
         instance_offset_in_buffer: int = 0,
     ):
-        if not isinstance(buffer, (bytearray, memoryview)):
-            if getattr(buffer, "backend", None) is None:
-                raise TypeError("Internal Error: BoundTypeInstance expects a bytearray, memoryview, or MemoryBackend.")
+        # Determine if we have a proxy or a native buffer
+        is_proxy = getattr(buffer, "backend", None) is not None
         
+        if not is_proxy and not isinstance(buffer, (bytearray, memoryview, bytes)):
+             raise TypeError("BoundTypeInstance expects a byte-like object or LiveMemoryProxy.")
+
+        # Wrap native buffers in memoryview for zero-copy slicing/comparisons
+        if not is_proxy and not isinstance(buffer, memoryview):
+            buffer = memoryview(buffer)
         # Fast initialization bypassing __setattr__ completely to prevent recursion
         object.__setattr__(self, "_instance_type_name", type_name)
         object.__setattr__(self, "_instance_type_def", type_def)
@@ -755,14 +761,13 @@ class BoundTypeInstance:
 
                 # Write like a C string: truncate, NUL-terminate, zero-fill
                 buf = self._instance_buffer
-                mv = memoryview(buf)
 
                 # zero-fill
-                mv[start:end] = b"\x00" * count
+                buf[start:end] = b"\x00" * count
 
                 # copy payload
                 payload = data[: max(0, count - 1)]
-                mv[start : start + len(payload)] = payload
+                buf[start : start + len(payload)] = payload
 
                 # Invalidate cache for this field if present
                 try:
@@ -847,8 +852,8 @@ class BoundTypeInstance:
             # Same type name and same exact byte values
             if self._instance_type_name == other._instance_type_name:
                 size = self._instance_type_def.size
-                v1 = memoryview(self._instance_buffer)[self._instance_offset : self._instance_offset + size]
-                v2 = memoryview(other._instance_buffer)[other._instance_offset : other._instance_offset + size]
+                v1 = self._instance_buffer[self._instance_offset : self._instance_offset + size]
+                v2 = other._instance_buffer[other._instance_offset : other._instance_offset + size]
                 return v1 == v2
 
             # If both are primitive/enum types, try comparing their actual values
@@ -865,7 +870,7 @@ class BoundTypeInstance:
                 return False
             
             # Zero-copy comparison against the byte-like object
-            v1 = memoryview(self._instance_buffer)[self._instance_offset : self._instance_offset + size]
+            v1 = self._instance_buffer[self._instance_offset : self._instance_offset + size]
             return v1 == other
 
         # 3. Compare against native Python types (int, float, str, etc.)
