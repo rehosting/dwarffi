@@ -421,9 +421,9 @@ class VtypeSymbol:
 
     def get_decoded_constant_data(self) -> Optional[bytes]:
         """Decodes base64-encoded constant data associated with the symbol."""
-        if self.constant_data:
+        if self.constant_data is not None:
             try:
-                return base64.b64decode(self.constant_data)
+                return base64.b64decode(self.constant_data, validate=True)
             except Exception:
                 return None
         return None
