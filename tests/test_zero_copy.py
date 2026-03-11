@@ -1,5 +1,7 @@
 import pytest
+
 from dwarffi import DFFI
+
 
 def _isf_base_le():
     return {

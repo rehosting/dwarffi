@@ -1,6 +1,7 @@
 import struct
-import pytest
+
 from dwarffi import DFFI
+
 
 def test_bitfield_preserves_other_bits_across_patterns():
     base_types = {
