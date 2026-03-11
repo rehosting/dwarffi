@@ -771,15 +771,10 @@ class BoundTypeInstance:
                 start = self._instance_offset + field_offset
                 end = start + count
 
-                # Write like a C string: truncate, NUL-terminate, zero-fill
-                buf = self._instance_buffer
 
-                # zero-fill
-                buf[start:end] = b"\x00" * count
-
-                # copy payload
                 payload = data[: max(0, count - 1)]
-                buf[start : start + len(payload)] = payload
+                full_data = payload.ljust(count, b"\x00")
+                self._instance_buffer[start : end] = full_data
 
                 # Invalidate cache for this field if present
                 try:
