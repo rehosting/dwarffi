@@ -439,3 +439,45 @@ def test_addressof_comprehensive_base_addresses(ffi_env):
     dyn_arr = ffi_env.from_buffer("int[5]", buf, address=dyn_arr_addr)
     assert (dyn_arr + 0).address == dyn_arr_addr
     assert (dyn_arr + 4).address == dyn_arr_addr + 16
+
+def test_ctype_string_normalization_equivalences():
+    ffi = DFFI({
+        "metadata": {},
+        "base_types": {
+            "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+            "pointer": {"kind": "pointer", "size": 8, "endian": "little"},
+            "void": {"kind": "void", "size": 0, "signed": False, "endian": "little"},
+        },
+        "user_types": {"t": {"kind": "struct", "size": 4, "fields": {}}},
+        "enums": {},
+        "symbols": {},
+    })
+
+    assert ffi.sizeof("  int ") == ffi.sizeof("int")
+    assert ffi.sizeof("int*") == ffi.sizeof("int *")
+    assert ffi.sizeof("struct t") == ffi.sizeof("t")
+
+
+def test_metamorphic_new_vs_manual_pack_bytes_match():
+    ffi = DFFI({
+        "metadata": {},
+        "base_types": {
+            "u32": {"kind": "int", "size": 4, "signed": False, "endian": "little"},
+        },
+        "user_types": {
+            "pair": {
+                "kind": "struct", "size": 8,
+                "fields": {
+                    "x": {"offset": 0, "type": {"kind": "base", "name": "u32"}},
+                    "y": {"offset": 4, "type": {"kind": "base", "name": "u32"}},
+                },
+            }
+        },
+        "enums": {}, "symbols": {},
+    })
+
+    a = ffi.new("struct pair", {"x": 1, "y": 2})
+    manual = bytearray(8)
+    struct.pack_into("<II", manual, 0, 1, 2)
+
+    assert bytes(a) == bytes(manual)
