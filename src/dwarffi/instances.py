@@ -209,7 +209,15 @@ class BoundArrayView:
         """
         if not isinstance(offset, int):
             return NotImplemented
-        base_addr = self._parent_instance._instance_offset + self._array_start_offset_in_parent
+            
+        # Natively check for the global base address
+        base_addr = getattr(self._parent_instance, "_base_address", None)
+        if base_addr is None:
+            base_addr = self._parent_instance._instance_offset
+        else:
+            base_addr = base_addr + self._parent_instance._instance_offset
+            
+        base_addr += self._array_start_offset_in_parent
         return Ptr(
             base_addr + (offset * self._element_size),
             self._array_subtype_info,
@@ -244,7 +252,8 @@ class BoundTypeInstance:
                  "_instance_cache", 
                  "_flat_fields",
                  "_instance_unpack_struct", 
-                 "_instance_pack_struct")
+                 "_instance_pack_struct",
+                 "_base_address")
 
     def __init__(
         self,
@@ -253,6 +262,7 @@ class BoundTypeInstance:
         buffer: Union[bytearray, memoryview, LiveMemoryProxy],
         vtype_accessor: Any,
         instance_offset_in_buffer: int = 0,
+        base_address: Optional[int] = None,
     ):
         # Determine if we have a proxy or a native buffer
         is_proxy = getattr(buffer, "backend", None) is not None
@@ -270,6 +280,7 @@ class BoundTypeInstance:
         object.__setattr__(self, "_instance_vtype_accessor", vtype_accessor)
         object.__setattr__(self, "_instance_offset", instance_offset_in_buffer)
         object.__setattr__(self, "_instance_cache", {})
+        object.__setattr__(self, "_base_address", base_address)
         
         # Lazy loading: Initialize to None to defer lookup overhead
         object.__setattr__(self, "_flat_fields", None)
@@ -488,6 +499,7 @@ class BoundTypeInstance:
                 self._instance_buffer,
                 self._instance_vtype_accessor,
                 absolute_field_offset,
+                self._base_address
             )
 
         elif kind == "enum":

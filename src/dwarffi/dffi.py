@@ -273,6 +273,7 @@ class DFFI:
         type_input: Union[str, Vtype],
         buffer: Union[bytes, bytearray, memoryview],
         instance_offset_in_buffer: int = 0,
+        base_address: Optional[int] = None
     ) -> BoundTypeInstance:
         """
         Internal factory: Creates a BoundTypeInstance by resolving the type across 
@@ -312,7 +313,7 @@ class DFFI:
 
         # Instantiate, passing 'self' (the DFFI object) as the type accessor
         return BoundTypeInstance(
-            type_name, type_def, processed_buffer, self, instance_offset_in_buffer
+            type_name, type_def, processed_buffer, self, instance_offset_in_buffer, base_address
         )
 
     def shift_symbol_addresses(self, delta: int, path: Optional[str] = None) -> None:
@@ -509,7 +510,7 @@ class DFFI:
             A `Ptr` object representing the memory address.
         """
         # Base should be absolute address when backend-backed
-        base_addr = getattr(cdata, "_address", None)
+        base_addr = getattr(cdata, "_base_address", None)
         if base_addr is None:
             # Buffer-only instance (no backend address)
             base_addr = cdata._instance_offset
@@ -739,6 +740,7 @@ class DFFI:
         python_buffer: Union[bytearray, memoryview, bytes],
         offset: int = 0,
         require_writable: bool = False,
+        address: Optional[int] = None,
     ) -> BoundType:
         """
         Creates a new DFFI instance bound directly to an existing Python memory buffer.
@@ -748,6 +750,7 @@ class DFFI:
             python_buffer: The host memory (bytearray, bytes, or memoryview).
             offset: The byte offset within the buffer to begin the binding.
             require_writable: If True, raises an error if the host buffer is read-only bytes.
+            address: Optional absolute address to associate with the instance
             
         Returns:
             The BoundTypeInstance mapped exactly over the host memory.
@@ -788,10 +791,10 @@ class DFFI:
             }
             self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
 
-            instance = self._create_instance(dummy_name, python_buffer, instance_offset_in_buffer=offset)
+            instance = self._create_instance(dummy_name, python_buffer, instance_offset_in_buffer=offset, base_address=address)
             return instance.arr
 
-        return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset)
+        return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset, base_address=address)
 
     def buffer(self, cdata: BoundType, size: int = -1) -> memoryview:
         """
