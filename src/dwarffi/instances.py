@@ -2,8 +2,8 @@ import difflib
 import struct
 from typing import Any, Dict, Iterator, Optional, Tuple, Union
 
-from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 from .backend import LiveMemoryProxy
+from .types import VtypeBaseType, VtypeEnum, VtypeUserType
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
