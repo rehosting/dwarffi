@@ -43,9 +43,8 @@ import base64
 import io
 import json
 import lzma
-import sys
 import struct as stdlib_struct
-from typing import Any, Dict
+import sys
 
 import pytest
 
@@ -53,7 +52,6 @@ import pytest
 from dwarffi import (
     DFFI,
     BoundArrayView,
-    BoundTypeInstance,
     BytesBackend,
     EnumInstance,
     Ptr,
@@ -66,9 +64,7 @@ from dwarffi.types import (
     VtypeSymbol,
     VtypeUserType,
     _FallbackBytesStruct,
-    _FallbackIntStruct,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared helpers / fixtures

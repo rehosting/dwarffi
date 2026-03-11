@@ -1,5 +1,5 @@
-import pytest
 from dwarffi import DFFI
+
 
 class RecordingBackend:
     def __init__(self, mem: bytearray):
