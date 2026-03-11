@@ -1,6 +1,6 @@
 import pytest
 
-from dwarffi import DFFI, VtypeUserType
+from dwarffi import DFFI
 from dwarffi.backend import BytesBackend
 
 

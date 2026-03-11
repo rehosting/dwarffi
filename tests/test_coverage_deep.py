@@ -1,6 +1,8 @@
+
 import pytest
-import re
-from dwarffi import DFFI, Ptr
+
+from dwarffi import DFFI
+
 
 @pytest.fixture
 def rich_ffi_env():
