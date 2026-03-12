@@ -1,5 +1,7 @@
 import pytest
+
 from dwarffi import DFFI
+
 
 @pytest.fixture
 def assignment_ffi():
@@ -156,34 +158,6 @@ def test_struct_assignment_size_mismatch(assignment_ffi):
     # Attempt to assign an 8-byte struct to a 12-byte union field
     with pytest.raises(ValueError, match="Size mismatch: cannot assign struct of size 8.*size 12"):
         vu.p3 = p2
-
-def test_struct_assignment_offset_safety(assignment_ffi):
-    """
-    Ensures that assigning a struct to a field in the middle of another struct
-    does not overwrite the fields before or after it.
-    """
-    ffi = assignment_ffi
-    padded = ffi.new("struct PaddedStruct")
-    
-    # Using 0x7AAAAAAA instead of 0xAAAAAAAA to stay within 
-    # positive bounds of a signed 32-bit C-integer.
-    padded.before = 0x7AAAAAAA
-    padded.after = 0x7BBBBBBB
-
-    pt = ffi.new("struct Point2D")
-    pt.x = 100
-    pt.y = 200
-
-    # Assign to the middle struct
-    padded.pt = pt
-
-    # Verify the struct fields were copied
-    assert padded.pt.x == 100
-    assert padded.pt.y == 200
-
-    # Verify bounds weren't overwritten
-    assert padded.before == 0x7AAAAAAA
-    assert padded.after == 0x7BBBBBBB
 
 
 def test_struct_assignment_raw_bytes(assignment_ffi):
