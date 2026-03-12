@@ -109,3 +109,76 @@ def test_cache_consistency_after_assignment(array_ffi):
     view2 = inst.buf
     assert view2 is not view1
     assert array_ffi.string(view2) == b"rebuild"
+
+def test_array_advanced_assignment():
+    """
+    Verifies that Python lists, tuples, and other BoundArrayViews can be 
+    directly assigned to array fields natively in DFFI.
+    """
+    isf = {
+        "metadata": {},
+        "base_types": {
+            "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+        },
+        "user_types": {
+            "Point2D": {
+                "kind": "struct", "size": 8,
+                "fields": {
+                    "x": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "y": {"offset": 4, "type": {"kind": "base", "name": "int"}}
+                }
+            },
+            "ArrayContainer": {
+                "kind": "struct", "size": 64,
+                "fields": {
+                    "numbers": {"offset": 0, "type": {"kind": "array", "count": 5, "subtype": {"kind": "base", "name": "int"}}},
+                    "more_numbers": {"offset": 20, "type": {"kind": "array", "count": 5, "subtype": {"kind": "base", "name": "int"}}},
+                    "points": {"offset": 40, "type": {"kind": "array", "count": 3, "subtype": {"kind": "struct", "name": "Point2D"}}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}
+    }
+    ffi = DFFI(isf)
+    inst = ffi.new("struct ArrayContainer")
+
+    # 1. Assign List of Integers
+    inst.numbers = [10, 20, 30]
+    assert inst.numbers[0] == 10
+    assert inst.numbers[1] == 20
+    assert inst.numbers[2] == 30
+    assert inst.numbers[3] == 0  # Should remain unmodified
+
+    # 2. Assign Tuple of Integers (Partially overwrites)
+    inst.numbers = (100, 200)
+    assert inst.numbers[0] == 100
+    assert inst.numbers[1] == 200
+    assert inst.numbers[2] == 30 # Retained from list assignment
+    
+    # 3. Assign BoundArrayView (Fast copy between fields)
+    inst.more_numbers = inst.numbers
+    assert inst.more_numbers[0] == 100
+    assert inst.more_numbers[1] == 200
+    assert inst.more_numbers[2] == 30
+
+    # 4. Assign List of Structs
+    p1 = ffi.new("struct Point2D")
+    p1.x, p1.y = 1, 1
+    p2 = ffi.new("struct Point2D")
+    p2.x, p2.y = 2, 2
+    
+    inst.points = [p1, p2]
+    assert inst.points[0].x == 1
+    assert inst.points[1].y == 2
+    assert inst.points[2].x == 0 # Unmodified struct
+
+    # 5. Error Cases
+    with pytest.raises(ValueError, match="Cannot assign sequence of size 6"):
+        inst.numbers = [1, 2, 3, 4, 5, 6]
+        
+    with pytest.raises(TypeError, match="Element size mismatch"):
+        # Numbers uses element size 4, points uses element size 8
+        inst.points = inst.numbers  
+
+    with pytest.raises(TypeError, match="Cannot assign int to array field"):
+        inst.numbers = 123

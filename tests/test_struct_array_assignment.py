@@ -65,7 +65,8 @@ def test_struct_char_array_assignment():
         inst.ints = b"\x01\x00\x00\x00"
 
     # 5. Error: Invalid input type for array field
-    with pytest.raises(NotImplementedError, match="Direct assignment to array field 'name' is not supported"):
+    # The implementation now raises a TypeError for invalid types like int
+    with pytest.raises(TypeError, match="Cannot assign int to array field 'name'"):
         inst.name = 12345
 
 def test_struct_zero_length_array_assignment():
