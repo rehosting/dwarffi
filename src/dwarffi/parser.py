@@ -1,17 +1,9 @@
 import io
 import lzma
+import msgspec
 from typing import Any, Dict, List, Optional, Union
 
-try:
-    import ujson as json
-
-    _JSON_LIB_USED = "ujson"
-except ImportError:
-    import json
-
-    _JSON_LIB_USED = "json"
-
-from .types import VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
+from .types import ISFData, VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
 
 
 class VtypeJson:
@@ -19,11 +11,11 @@ class VtypeJson:
     Parser and container for Intermediate Structure Format (ISF) data.
 
     This class handles the ingestion of ISF JSON data (from dictionaries, files, or 
-    compressed .xz streams) and provides a lazy-loading interface to resolve 
-    Dwarf-derived types and symbols.
+    compressed .xz streams) utilizing msgspec for accelerated loading and strict schema 
+    enforcement.
     """
 
-    def __init__(self, isf_input: Union[Dict[str, Any], str, io.IOBase]):
+    def __init__(self, isf_input: Union[Dict[str, Any], bytes, str, io.IOBase]):
         """
         Initializes an ISF definition from a dictionary, file path, or file-like object.
 
@@ -36,63 +28,50 @@ class VtypeJson:
             ValueError: If JSON is malformed or required ISF sections are missing.
             TypeError: If input is not one of the supported types.
         """
-        raw_data: Dict[str, Any]
-
-        if isinstance(isf_input, dict):
-            raw_data = isf_input
-        elif isinstance(isf_input, str):
-            # Treat string as a file path
-            is_xz = isf_input.endswith(".xz")
-            try:
+        try:
+            if isinstance(isf_input, dict):
+                self._isf = msgspec.convert(isf_input, type=ISFData)
+            elif isinstance(isf_input, bytes):
+                self._isf = msgspec.json.decode(isf_input, type=ISFData)
+            elif isinstance(isf_input, str):
+                is_xz = isf_input.endswith(".xz")
                 if is_xz:
-                    with lzma.open(isf_input, "rt", encoding="utf-8") as f:
-                        raw_data = json.load(f)
+                    with lzma.open(isf_input, "rb") as f:
+                        try:
+                            file_data = f.read()
+                        except lzma.LZMAError as e:
+                            raise ValueError(f"Error decompressing XZ file {isf_input}.") from e
+                        self._isf = msgspec.json.decode(file_data, type=ISFData)
                 else:
-                    with open(isf_input, "r", encoding="utf-8") as f:
-                        raw_data = json.load(f)
-            except FileNotFoundError as e:
-                raise FileNotFoundError(f"The ISF JSON file was not found: {isf_input}") from e
-            except (IOError, OSError) as e:
-                raise ValueError(f"Could not open or read file '{isf_input}'. Error: {e}") from e
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON from file {isf_input} (using {_JSON_LIB_USED}).") from e
-            except lzma.LZMAError as e:
-                raise ValueError(f"Error decompressing XZ file {isf_input}.") from e
-        elif hasattr(isf_input, "read"):
-            # Treat as a file-like object
-            try:
-                raw_data = json.load(isf_input)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Error decoding JSON from file-like object (using {_JSON_LIB_USED}).") from e
-        else:
-            raise TypeError(f"Input must be a dict, file path (str), or file-like object. Got {type(isf_input)}.")
+                    with open(isf_input, "rb") as f:
+                        self._isf = msgspec.json.decode(f.read(), type=ISFData)
+            elif hasattr(isf_input, "read"):
+                data = isf_input.read()
+                if isinstance(data, str):
+                    data = data.encode("utf-8")
+                self._isf = msgspec.json.decode(data, type=ISFData)
+            else:
+                raise TypeError(f"Input must be a dict, bytes, file path (str), or file-like object. Got {type(isf_input)}.")
+                
+        except FileNotFoundError as e:
+            raise FileNotFoundError(f"The ISF JSON file was not found: {isf_input}") from e
+        except (IOError, OSError) as e:
+            raise ValueError(f"Could not open or read file '{isf_input}'. Error: {e}") from e
+        except msgspec.ValidationError as e:
+            err_str = str(e)
+            if "Expected `object`" in err_str and "got `array`" in err_str:
+                raise ValueError("ISF JSON root must be an object, not a list or other type.") from e
+            if "missing required field `kind`" in err_str:
+                raise ValueError("missing the required 'kind' field (struct, union, etc).") from e
+            if "missing required field `base_types`" in err_str or "missing required field `user_types`" in err_str:
+                raise ValueError("ISF is missing required top-level sections") from e
+            raise ValueError(f"ISF format validation failed: {e}") from e
+            
+        except msgspec.DecodeError as e:
+            raise ValueError(f"Error decoding JSON: {e}") from e
 
-        if not isinstance(raw_data, dict):
-            raise ValueError("ISF JSON root must be an object, not a list or other type.")
-
-        # Basic Schema Validation
-        required_sections = ["base_types", "user_types"]
-        missing = [s for s in required_sections if s not in raw_data]
-        if missing:
-            raise ValueError(f"ISF is missing required top-level sections: {missing}")
-
-        # Ensure all user types have a 'kind'
-        for name, definition in raw_data.get("user_types", {}).items():
-            if "kind" not in definition:
-                raise ValueError(f"User type '{name}' is missing the required 'kind' field (struct, union, etc).")
-
-        # Initialize core data structures and metadata
-        self.metadata: VtypeMetadata = VtypeMetadata(raw_data.get("metadata", {}))
-        self._raw_base_types: Dict[str, Any] = raw_data.get("base_types", {})
-        self._parsed_base_types_cache: Dict[str, VtypeBaseType] = {}
-        self._raw_user_types: Dict[str, Any] = raw_data.get("user_types", {})
-        self._parsed_user_types_cache: Dict[str, VtypeUserType] = {}
-        self._raw_enums: Dict[str, Any] = raw_data.get("enums", {})
-        self._parsed_enums_cache: Dict[str, VtypeEnum] = {}
-        self._raw_symbols: Dict[str, Any] = raw_data.get("symbols", {})
-        self._parsed_symbols_cache: Dict[str, VtypeSymbol] = {}
+        self.metadata: VtypeMetadata = self._isf.metadata
         self._address_to_symbol_list_cache: Optional[Dict[int, List[VtypeSymbol]]] = None
-        self._raw_typedefs: Dict[str, Any] = raw_data.get("typedefs", {})
 
     def _resolve_type_info(self, type_info: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -113,7 +92,7 @@ class VtypeJson:
             if name in visited:
                 raise ValueError(f"Circular typedef: {name}")
             visited.add(name)
-            td = self._raw_typedefs.get(name)
+            td = self._isf.typedefs.get(name)
             if not td:
                 break
             current = td
@@ -127,63 +106,26 @@ class VtypeJson:
         Args:
             delta: The integer amount to shift addresses by.
         """
-        for _sym_name, sym_data in self._raw_symbols.items():
-            if (
-                sym_data is not None
-                and "address" in sym_data
-                and sym_data["address"] not in [None, 0]
-            ):
-                sym_data["address"] += delta
-        for sym_obj in self._parsed_symbols_cache.values():
+        for sym_obj in self._isf.symbols.values():
             if sym_obj.address not in [None, 0]:
                 sym_obj.address += delta
-        
-        # Invalidate the reverse lookup cache after a shift
         self._address_to_symbol_list_cache = None
 
     def get_base_type(self, name: str) -> Optional[VtypeBaseType]:
         """Retrieves a cached VtypeBaseType object by name."""
-        if name in self._parsed_base_types_cache:
-            return self._parsed_base_types_cache[name]
-        raw_data = self._raw_base_types.get(name)
-        if raw_data is None:
-            return None
-        obj = VtypeBaseType(name, raw_data)
-        self._parsed_base_types_cache[name] = obj
-        return obj
+        return self._isf.base_types.get(name)
 
     def get_user_type(self, name: str) -> Optional[VtypeUserType]:
         """Retrieves a cached VtypeUserType (struct/union) by name."""
-        if name in self._parsed_user_types_cache:
-            return self._parsed_user_types_cache[name]
-        raw_data = self._raw_user_types.get(name)
-        if raw_data is None:
-            return None
-        obj = VtypeUserType(name, raw_data)
-        self._parsed_user_types_cache[name] = obj
-        return obj
+        return self._isf.user_types.get(name)
 
     def get_enum(self, name: str) -> Optional[VtypeEnum]:
         """Retrieves a cached VtypeEnum object by name."""
-        if name in self._parsed_enums_cache:
-            return self._parsed_enums_cache[name]
-        raw_data = self._raw_enums.get(name)
-        if raw_data is None:
-            return None
-        obj = VtypeEnum(name, raw_data)
-        self._parsed_enums_cache[name] = obj
-        return obj
+        return self._isf.enums.get(name)
 
     def get_symbol(self, name: str) -> Optional[VtypeSymbol]:
         """Retrieves a cached VtypeSymbol object by name."""
-        if name in self._parsed_symbols_cache:
-            return self._parsed_symbols_cache[name]
-        raw_data = self._raw_symbols.get(name)
-        if raw_data is None:
-            return None
-        obj = VtypeSymbol(name, raw_data)
-        self._parsed_symbols_cache[name] = obj
-        return obj
+        return self._isf.symbols.get(name)
 
     def get_type(self, name: str) -> Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]]:
         """
@@ -219,9 +161,8 @@ class VtypeJson:
         """
         if self._address_to_symbol_list_cache is None:
             self._address_to_symbol_list_cache = {}
-            for symbol_name in self._raw_symbols.keys():
-                symbol_obj = self.get_symbol(symbol_name)
-                if symbol_obj and symbol_obj.address is not None:
+            for symbol_obj in self._isf.symbols.values():
+                if symbol_obj.address is not None:
                     self._address_to_symbol_list_cache.setdefault(symbol_obj.address, []).append(
                         symbol_obj
                     )
@@ -267,6 +208,6 @@ class VtypeJson:
 
     def __repr__(self) -> str:
         return (
-            f"<VtypeJson RawBaseTypes={len(self._raw_base_types)} RawUserTypes={len(self._raw_user_types)} "
-            f"RawEnums={len(self._raw_enums)} RawSymbols={len(self._raw_symbols)} (Lazy Loaded)>"
+            f"<VtypeJson BaseTypes={len(self._isf.base_types)} UserTypes={len(self._isf.user_types)} "
+            f"Enums={len(self._isf.enums)} Symbols={len(self._isf.symbols)}>"
         )
