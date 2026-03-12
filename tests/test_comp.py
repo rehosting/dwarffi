@@ -64,6 +64,7 @@ from dwarffi.types import (
     VtypeSymbol,
     VtypeUserType,
     _FallbackBytesStruct,
+    VtypeStructField,
 )
 
 # ---------------------------------------------------------------------------
@@ -265,7 +266,7 @@ class TestFallbackBytesStruct:
 
 class TestVtypeBaseTypeExoticKinds:
     def test_bool_kind_compiles(self):
-        bt = VtypeBaseType("mybool", {"kind": "bool", "size": 1, "signed": False, "endian": "little"})
+        bt = VtypeBaseType(name="mybool", kind="bool", size=1, signed=False, endian="little")
         cs = bt.get_compiled_struct()
         assert cs is not None
         buf = bytearray(1)
@@ -273,7 +274,7 @@ class TestVtypeBaseTypeExoticKinds:
         assert buf[0] == 1
 
     def test_char_kind_unsigned(self):
-        bt = VtypeBaseType("char", {"kind": "char", "size": 1, "signed": False, "endian": "little"})
+        bt = VtypeBaseType(name="char", kind="char", size=1, signed=False, endian="little")
         cs = bt.get_compiled_struct()
         assert cs is not None
         buf = bytearray(1)
@@ -281,14 +282,14 @@ class TestVtypeBaseTypeExoticKinds:
         assert buf[0] == 255
 
     def test_f16_half_precision(self):
-        bt = VtypeBaseType("f16", {"kind": "float", "size": 2, "signed": True, "endian": "little"})
+        bt = VtypeBaseType(name="f16", kind="float", size=2, signed=True, endian="little")
         cs = bt.get_compiled_struct()
         assert cs is not None
         assert cs.size == 2
 
     def test_f32_and_f64(self):
-        f32 = VtypeBaseType("f32", {"kind": "float", "size": 4, "signed": True, "endian": "little"})
-        f64 = VtypeBaseType("f64", {"kind": "float", "size": 8, "signed": True, "endian": "little"})
+        f32 = VtypeBaseType(name="f32", kind="float", size=4, signed=True, endian="little")
+        f64 = VtypeBaseType(name="f64", kind="float", size=8, signed=True, endian="little")
         assert f32.get_compiled_struct() is not None
         assert f64.get_compiled_struct() is not None
 
@@ -350,17 +351,17 @@ class TestAggregatedStructFailurePaths:
 
 class TestVtypeEnumCache:
     def test_val_to_name_starts_none(self):
-        e = VtypeEnum("e", {"size": 4, "base": "int", "constants": {"A": 1, "B": 2}})
+        e = VtypeEnum(name="e", size=4, base="int", constants={"A": 1, "B": 2})
         assert e._val_to_name is None
 
     def test_get_name_for_value_builds_cache(self):
-        e = VtypeEnum("e", {"size": 4, "base": "int", "constants": {"A": 1, "B": 2}})
+        e = VtypeEnum(name="e", size=4, base="int", constants={"A": 1, "B": 2})
         assert e.get_name_for_value(1) == "A"
         assert e._val_to_name is not None
         assert e.get_name_for_value(2) == "B"
 
     def test_unknown_value_returns_none(self):
-        e = VtypeEnum("e", {"size": 4, "base": "int", "constants": {"A": 0}})
+        e = VtypeEnum(name="e", size=4, base="int", constants={"A": 0})
         assert e.get_name_for_value(99) is None
 
 
@@ -372,29 +373,29 @@ class TestVtypeSymbolConstantData:
     def test_valid_base64_decodes(self):
         payload = b"hello world"
         encoded = base64.b64encode(payload).decode()
-        s = VtypeSymbol("sym", {"address": 0x1000, "constant_data": encoded})
+        s = VtypeSymbol(name="sym", address=0x1000, constant_data=encoded)
         assert s.get_decoded_constant_data() == payload
 
     def test_no_constant_data_returns_none(self):
-        s = VtypeSymbol("sym", {"address": 0x1000})
+        s = VtypeSymbol(name="sym", address=0x1000)
         assert s.get_decoded_constant_data() is None
 
     def test_invalid_base64_returns_none(self):
-        s = VtypeSymbol("sym", {"address": 0x1000, "constant_data": "!!!not valid!!!"})
+        s = VtypeSymbol(name="sym", address=0x1000, constant_data="!!!not valid!!!")
         assert s.get_decoded_constant_data() is None
 
     def test_symbol_pretty_print(self):
-        s = VtypeSymbol("my_var", {"address": 0xDEAD, "type": {"kind": "base", "name": "int"}})
+        s = VtypeSymbol(name="my_var", address=0xDEAD, type_info={"kind": "base", "name": "int"})
         out = s.pretty_print()
         assert "my_var" in out
         assert "0xdead" in out.lower()
 
     def test_symbol_str_equals_pretty_print(self):
-        s = VtypeSymbol("my_var", {"address": 0x10, "type": {"kind": "base", "name": "int"}})
+        s = VtypeSymbol(name="my_var", address=0x10, type_info={"kind": "base", "name": "int"})
         assert str(s) == s.pretty_print()
 
     def test_symbol_to_dict(self):
-        s = VtypeSymbol("foo", {"address": 0x400, "type": {"kind": "struct", "name": "bar"}})
+        s = VtypeSymbol(name="foo", address=0x400, type_info={"kind": "struct", "name": "bar"})
         d = s.to_dict()
         assert d["name"] == "foo"
         assert d["address"] == 0x400
@@ -408,7 +409,7 @@ class TestVtypeSymbolConstantData:
 class TestEnumInstanceEquality:
     @pytest.fixture
     def color_enum(self):
-        return VtypeEnum("color", {"size": 4, "base": "int", "constants": {"RED": 0, "GREEN": 1}})
+        return VtypeEnum(name="color", size=4, base="int", constants={"RED": 0, "GREEN": 1})
 
     def test_equal_to_same_value(self, color_enum):
         assert EnumInstance(color_enum, 0) == EnumInstance(color_enum, 0)
@@ -963,13 +964,13 @@ class TestDFFIOffsetsErrors:
 
 class TestVtypeTypePrettyPrint:
     def _make_user_type(self):
-        return VtypeUserType("foo", {
-            "kind": "struct", "size": 8,
-            "fields": {"a": {"offset": 0, "type": {"kind": "base", "name": "int"}, "anonymous": False}},
-        })
+        return VtypeUserType(
+            name="foo", kind="struct", size=8, 
+            fields={"a": VtypeStructField(name="a", offset=0, type_info={"kind": "base", "name": "int"}, anonymous=False)}
+        )
 
     def _make_enum(self):
-        return VtypeEnum("status", {"size": 4, "base": "int", "constants": {"OK": 0, "ERR": 1}})
+        return VtypeEnum(name="status", size=4, base="int", constants={"OK": 0, "ERR": 1})
 
     def test_user_type_to_dict(self):
         d = self._make_user_type().to_dict()
