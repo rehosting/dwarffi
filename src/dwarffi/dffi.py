@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional, TypeAlias, Union
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
-from .types import VtypeBaseType, VtypeEnum, VtypeSymbol, VtypeUserType
+from .types import VtypeBaseType, VtypeEnum, VtypeStructField, VtypeSymbol, VtypeUserType
 
 # Clean, unified Type Aliases
 VTYPE_CLASSES = (VtypeBaseType, VtypeEnum, VtypeUserType)
@@ -96,7 +96,7 @@ class DFFI:
         # First loaded wins => iterate in load order and don't overwrite.
         for path in self._file_order:
             vj = self.vtypejsons[path]
-            for sym_name in vj._raw_symbols.keys():
+            for sym_name in vj._isf.symbols.keys():
                 if sym_name in merged:
                     continue
                 sym = self.get_symbol(sym_name, path=path, include_incomplete=True)
@@ -110,7 +110,7 @@ class DFFI:
         """Returns a dictionary of all user types (structs/unions) across all loaded ISF files."""
         merged = {}
         for path in reversed(self._file_order):
-            for type_name in self.vtypejsons[path]._raw_user_types.keys():
+            for type_name in self.vtypejsons[path]._isf.user_types.keys():
                 t = self.get_user_type(type_name)
                 if t:
                     merged[type_name] = t
@@ -121,7 +121,7 @@ class DFFI:
         """Returns a dictionary of all base types across all loaded ISF files."""
         merged = {}
         for path in reversed(self._file_order):
-            for type_name in self.vtypejsons[path]._raw_base_types.keys():
+            for type_name in self.vtypejsons[path]._isf.base_types.keys():
                 t = self.get_base_type(type_name)
                 if t:
                     merged[type_name] = t
@@ -132,7 +132,7 @@ class DFFI:
         """Returns a dictionary of all enums across all loaded ISF files."""
         merged = {}
         for path in reversed(self._file_order):
-            for enum_name in self.vtypejsons[path]._raw_enums.keys():
+            for enum_name in self.vtypejsons[path]._isf.enums.keys():
                 t = self.get_enum(enum_name)
                 if t:
                     merged[enum_name] = t
@@ -152,7 +152,7 @@ class DFFI:
 
             td = None
             for f in self._file_order:
-                td = self.vtypejsons[f]._raw_typedefs.get(name)
+                td = self.vtypejsons[f]._isf.typedefs.get(name)
                 if td:
                     break
             if not td:
@@ -599,12 +599,12 @@ class DFFI:
             # without modifying the core instances engine.
             dummy_name = f"__dummy_{id(buf)}"
             primary_isf_path = self._file_order[0]
-            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
-                "kind": "struct",
-                "size": size,
-                "fields": {"arr": {"offset": 0, "type": t}},
-            }
-            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+            self.vtypejsons[primary_isf_path]._isf.user_types[dummy_name] = VtypeUserType(
+                kind="struct",
+                size=size,
+                fields={"arr": VtypeStructField(type_info=t, offset=0, name="arr")},
+                name=dummy_name
+            )
 
             instance = self._create_instance(dummy_name, buf)
             arr_view = instance.arr
@@ -709,12 +709,12 @@ class DFFI:
                 dummy_size = count * elem_size
             dummy_name = f"__dummy_backend_{address}_{hash(str(t_dummy))}"
             primary_isf_path = self._file_order[0]
-            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
-                "kind": "struct",
-                "size": dummy_size,
-                "fields": {"arr": {"offset": 0, "type": t_dummy}},
-            }
-            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+            self.vtypejsons[primary_isf_path]._isf.user_types[dummy_name] = VtypeUserType(
+                kind="struct",
+                size=dummy_size,
+                fields={"arr": VtypeStructField(type_info=t_dummy, offset=0, name="arr")},
+                name=dummy_name
+            )
 
             instance = self._create_instance(dummy_name, proxy, instance_offset_in_buffer=address)
             return instance.arr
@@ -782,12 +782,12 @@ class DFFI:
             dummy_name = f"__dummy_{id(python_buffer)}_{offset}_{hash(str(t))}"
             primary_isf_path = self._file_order[0]
             
-            self.vtypejsons[primary_isf_path]._raw_user_types[dummy_name] = {
-                "kind": "struct",
-                "size": dummy_size,
-                "fields": {"arr": {"offset": 0, "type": t}},
-            }
-            self.vtypejsons[primary_isf_path]._parsed_user_types_cache.pop(dummy_name, None)
+            self.vtypejsons[primary_isf_path]._isf.user_types[dummy_name] = VtypeUserType(
+                kind="struct",
+                size=dummy_size,
+                fields={"arr": VtypeStructField(type_info=t, offset=0, name="arr")},
+                name=dummy_name
+            )
 
             instance = self._create_instance(dummy_name, python_buffer, instance_offset_in_buffer=offset, base_address=address)
             return instance.arr
