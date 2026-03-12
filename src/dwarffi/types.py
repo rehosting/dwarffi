@@ -1,52 +1,40 @@
 import base64
 import struct
+import msgspec
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 
-class SourceMetadata:
+class SourceMetadata(msgspec.Struct):
     """Represents source file metadata within the ISF, tracking provenance."""
-
-    __slots__ = "kind", "name", "hash_type", "hash_value"
-
-    def __init__(self, data: Dict[str, Any]):
-        self.kind: Optional[str] = data.get("kind")
-        self.name: Optional[str] = data.get("name")
-        self.hash_type: Optional[str] = data.get("hash_type")
-        self.hash_value: Optional[str] = data.get("hash_value")
+    kind: Optional[str] = None
+    name: Optional[str] = None
+    hash_type: Optional[str] = None
+    hash_value: Optional[str] = None
 
     def __repr__(self) -> str:
         return f"<SourceMetadata Name='{self.name}' Kind='{self.kind}'>"
 
 
-class UnixMetadata:
+class UnixMetadata(msgspec.Struct):
     """Represents Unix-specific (Linux/Mac) metadata grouping symbols and types."""
+    symbols: List[Optional[SourceMetadata]] = msgspec.field(default_factory=list)
+    types: List[Optional[SourceMetadata]] = msgspec.field(default_factory=list)
 
-    __slots__ = "symbols", "types"
-
-    def __init__(self, data: Dict[str, Any]):
-        self.symbols: List[SourceMetadata] = [
-            SourceMetadata(s_data) for s_data in data.get("symbols", []) if s_data
-        ]
-        self.types: List[SourceMetadata] = [
-            SourceMetadata(t_data) for t_data in data.get("types", []) if t_data
-        ]
+    def __post_init__(self):
+        # Filter out null entries
+        self.symbols = [s for s in self.symbols if s is not None]
+        self.types = [t for t in self.types if t is not None]
 
     def __repr__(self) -> str:
         return f"<UnixMetadata Symbols={len(self.symbols)} Types={len(self.types)}>"
 
 
-class VtypeMetadata:
+class VtypeMetadata(msgspec.Struct):
     """Represents the top-level provenance and format metadata in the ISF."""
-
-    __slots__ = "linux", "mac", "producer", "format_version"
-
-    def __init__(self, data: Dict[str, Any]):
-        self.linux: Optional[UnixMetadata] = (
-            UnixMetadata(data["linux"]) if data.get("linux") else None
-        )
-        self.mac: Optional[UnixMetadata] = UnixMetadata(data["mac"]) if data.get("mac") else None
-        self.producer: Dict[str, str] = data.get("producer", {})
-        self.format_version: Optional[str] = data.get("format")
+    linux: Optional[UnixMetadata] = None
+    mac: Optional[UnixMetadata] = None
+    producer: Dict[str, str] = msgspec.field(default_factory=dict)
+    format_version: Optional[str] = msgspec.field(name="format", default=None)
 
     def __repr__(self) -> str:
         return (
@@ -113,23 +101,16 @@ class _FallbackBytesStruct:
             buffer[offset : offset + valid_len] = value[:valid_len]
 
 
-class VtypeBaseType:
+class VtypeBaseType(msgspec.Struct):
     """
     Represents a primitive base type definition (e.g., int, char, float).
-    
-    Caches a `struct.Struct` object (or an equivalent duck-type) for 
-    high-performance memory packing/unpacking.
     """
-
-    __slots__ = "name", "size", "signed", "kind", "endian", "_compiled_struct"
-
-    def __init__(self, name: str, data: Dict[str, Any]):
-        self.name: str = name
-        self.size: int = data.get("size", 0)
-        self.signed: bool = data.get("signed", False)
-        self.kind: str = data.get("kind", "int")
-        self.endian: str = data.get("endian", "little")
-        self._compiled_struct: Any = None
+    size: int = 0
+    signed: bool = False
+    kind: str = "int"
+    endian: str = "little"
+    name: str = "" 
+    _compiled_struct: Any = msgspec.field(default=None)
 
     def get_compiled_struct(self) -> Any:
         """
@@ -190,16 +171,12 @@ class VtypeBaseType:
         return f"<VtypeBaseType Name='{self.name}' Kind='{self.kind}' Size={self.size} Signed={self.signed}>"
 
 
-class VtypeStructField:
+class VtypeStructField(msgspec.Struct):
     """Represents a single field within a user-defined struct or union."""
-
-    __slots__ = "name", "type_info", "offset", "anonymous"
-
-    def __init__(self, name: str, data: Dict[str, Any]):
-        self.name: str = name
-        self.type_info: Dict[str, Any] = data.get("type", {})
-        self.offset: int = data.get("offset", 0)
-        self.anonymous: bool = data.get("anonymous", False)
+    type_info: Dict[str, Any] = msgspec.field(name="type", default_factory=dict)
+    offset: int = 0
+    anonymous: bool = False
+    name: str = ""
 
     def __repr__(self) -> str:
         type_kind = self.type_info.get("kind", "unknown")
@@ -208,27 +185,28 @@ class VtypeStructField:
         return f"<VtypeStructField Name='{self.name}' Offset={self.offset} TypeKind='{type_kind}'{name_part}>"
 
 
-class VtypeUserType:
+class VtypeUserType(msgspec.Struct):
     """
     Represents a complex user-defined type (struct or union).
     
     Supports O(1) flattened field lookups and optimized block-unpacking 
     for primitive-only structures.
     """
+    kind: str
+    size: int = 0
+    fields: Dict[str, Optional[VtypeStructField]] = msgspec.field(default_factory=dict)
+    name: str = ""
+    _flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]] = msgspec.field(default=None)
+    _aggregated_struct: Optional[struct.Struct] = msgspec.field(default=None)
 
-    __slots__ = "name", "size", "fields", "kind", "_flattened_fields", "_aggregated_struct"
-
-    def __init__(self, name: str, data: Dict[str, Any]):
-        self.name: str = name
-        self.size: int = data.get("size", 0)
-        self.fields: Dict[str, VtypeStructField] = {
-            f_name: VtypeStructField(f_name, f_data)
-            for f_name, f_data in data.get("fields", {}).items()
-            if f_data
-        }
-        self.kind: str = data.get("kind", "struct")
-        self._flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]] = None
-        self._aggregated_struct: Optional[struct.Struct] = None
+    def __post_init__(self):
+        if self.fields:
+            clean_fields = {}
+            for k, v in self.fields.items():
+                if v is not None:
+                    v.name = k
+                    clean_fields[k] = v
+            self.fields = clean_fields
 
     def get_flattened_fields(self, vtype_accessor: Any) -> Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]:
         """
@@ -362,17 +340,13 @@ class VtypeUserType:
         return self.pretty_print()
 
 
-class VtypeEnum:
+class VtypeEnum(msgspec.Struct):
     """Represents a C enumeration and its constant mappings."""
-
-    __slots__ = "name", "size", "base", "constants", "_val_to_name"
-
-    def __init__(self, name: str, data: Dict[str, Any]):
-        self.name: str = name
-        self.size: int = data.get("size", 0)
-        self.base: Optional[str] = data.get("base")
-        self.constants: Dict[str, int] = data.get("constants", {})
-        self._val_to_name: Optional[Dict[int, str]] = None
+    size: int = 0
+    base: Optional[str] = None
+    constants: Dict[str, int] = msgspec.field(default_factory=dict)
+    name: str = ""
+    _val_to_name: Optional[Dict[int, str]] = msgspec.field(default=None)
 
     def get_name_for_value(self, value: int) -> Optional[str]:
         """Performs a reverse lookup to find a constant name for an integer value."""
@@ -408,16 +382,12 @@ class VtypeEnum:
         return self.pretty_print()
 
 
-class VtypeSymbol:
+class VtypeSymbol(msgspec.Struct):
     """Represents a global symbol (function or variable) and its memory location."""
-
-    __slots__ = "name", "type_info", "address", "constant_data"
-
-    def __init__(self, name: str, data: Dict[str, Any]):
-        self.name: str = name
-        self.type_info: Optional[Dict[str, Any]] = data.get("type")
-        self.address: Optional[int] = data.get("address")
-        self.constant_data: Optional[str] = data.get("constant_data")
+    type_info: Optional[Dict[str, Any]] = msgspec.field(name="type", default=None)
+    address: Optional[int] = None
+    constant_data: Optional[str] = None
+    name: str = ""
 
     def get_decoded_constant_data(self) -> Optional[bytes]:
         """Decodes base64-encoded constant data associated with the symbol."""
@@ -459,3 +429,38 @@ class VtypeSymbol:
 
     def __str__(self) -> str:
         return self.pretty_print()
+
+
+class ISFData(msgspec.Struct):
+    """Top-Level ISF Parsing Structure"""
+    base_types: Dict[str, Optional[VtypeBaseType]]
+    user_types: Dict[str, Optional[VtypeUserType]]
+    metadata: VtypeMetadata = msgspec.field(default_factory=VtypeMetadata)
+    enums: Dict[str, Optional[VtypeEnum]] = msgspec.field(default_factory=dict)
+    symbols: Dict[str, Optional[VtypeSymbol]] = msgspec.field(default_factory=dict)
+    typedefs: Dict[str, Any] = msgspec.field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.base_types:
+            self.base_types = {k: v for k, v in self.base_types.items() if v is not None}
+            for k, v in self.base_types.items():
+                v.name = k
+        else:
+            self.base_types = {}
+
+        if self.user_types:
+            self.user_types = {k: v for k, v in self.user_types.items() if v is not None}
+            for k, v in self.user_types.items():
+                v.name = k
+        else:
+            self.user_types = {}
+
+        if self.enums:
+            self.enums = {k: v for k, v in self.enums.items() if v is not None}
+            for k, v in self.enums.items():
+                v.name = k
+
+        if self.symbols:
+            self.symbols = {k: v for k, v in self.symbols.items() if v is not None}
+            for k, v in self.symbols.items():
+                v.name = k
