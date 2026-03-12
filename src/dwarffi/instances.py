@@ -769,39 +769,57 @@ class BoundTypeInstance:
             _, field_offset, resolved_info, resolved_obj = flat_fields[name]
             
             if resolved_info["kind"] == "array":
-                # Allow direct assignment only for byte/char arrays
-                if isinstance(new_value, str):
-                    data = new_value.encode("utf-8")
-                elif isinstance(new_value, (bytes, bytearray, memoryview)):
-                    data = bytes(new_value)
-                else:
-                    raise NotImplementedError(
-                        f"Direct assignment to array field '{name}' is not supported."
-                    )
-
-                # Resolve element type and ensure it's 1 byte
+                count = resolved_info.get("count", 0)
+                if count <= 0:
+                    return
+                
                 subtype_info = resolved_info.get("subtype")
                 if subtype_info is None:
                     raise ValueError(f"Array field '{name}' missing subtype info.")
 
-                elem_size = self._instance_vtype_accessor.get_type_size(subtype_info)
-                if elem_size != 1:
-                    raise NotImplementedError(
-                        f"Direct assignment to non-byte array field '{name}' is not supported."
-                    )
+                # 1. String and Bytes to char/byte array (Legacy Support)
+                if isinstance(new_value, (str, bytes, bytearray, memoryview)):
+                    elem_size = self._instance_vtype_accessor.get_type_size(subtype_info)
+                    if elem_size != 1:
+                        raise NotImplementedError(
+                            f"Direct assignment to non-byte array field '{name}' is not supported."
+                        )
+                        
+                    data = new_value.encode("utf-8") if isinstance(new_value, str) else bytes(new_value)
+                    
+                    start = self._instance_offset + field_offset
+                    end = start + count
+                    payload = data[: max(0, count - 1)]
+                    full_data = payload.ljust(count, b"\x00")
+                    self._instance_buffer[start : end] = full_data
 
-                count = resolved_info.get("count", 0)
-                if count <= 0:
-                    return
+                # 2. BoundArrayView assignment (Fast zero-copy memory slice)
+                elif isinstance(new_value, BoundArrayView):
+                    # Check element size BEFORE checking array length
+                    elem_size = self._instance_vtype_accessor.get_type_size(subtype_info)
+                    if new_value._element_size != elem_size:
+                         raise TypeError(f"Element size mismatch in array assignment: expected {elem_size}, got {new_value._element_size}.")
+                    
+                    if len(new_value) > count:
+                        raise ValueError(f"Cannot assign array of size {len(new_value)} to field '{name}' of size {count}.")
+                    
+                    copy_size = len(new_value) * new_value._element_size
+                    start = self._instance_offset + field_offset
+                    self._instance_buffer[start : start + copy_size] = bytes(new_value)
 
-                # Compute array start in underlying buffer
-                start = self._instance_offset + field_offset
-                end = start + count
-
-
-                payload = data[: max(0, count - 1)]
-                full_data = payload.ljust(count, b"\x00")
-                self._instance_buffer[start : end] = full_data
+                # 3. List / Tuple assignment (Element-wise iteration)
+                elif isinstance(new_value, (list, tuple)):
+                    if len(new_value) > count:
+                        raise ValueError(f"Cannot assign sequence of size {len(new_value)} to array field '{name}' of size {count}.")
+                    
+                    # Temporarily instantiate a view to handle element-wise data writing
+                    arr_view = BoundArrayView(self, name, resolved_info, field_offset)
+                    for i, val in enumerate(new_value):
+                        arr_view[i] = val
+                        
+                else:
+                    raise TypeError(f"Cannot assign {type(new_value).__name__} to array field '{name}'. "
+                                    "Expected str, bytes, list, tuple, or BoundArrayView.")
 
                 # Invalidate cache for this field if present
                 try:
