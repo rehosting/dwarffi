@@ -90,3 +90,84 @@ def test_struct_zero_length_array_assignment():
     # Should return early since count <= 0.
     inst.flex = "nothing"
     assert bytes(inst) == b"\x00\x00\x00\x00"
+
+def test_struct_direct_assignment():
+    """
+    Verifies direct assignment of a BoundTypeInstance (struct) to a struct field.
+    Tests successful memory copies, cache invalidation, size mismatch errors, and type errors.
+    """
+    isf = {
+        "metadata": {},
+        "base_types": {
+            "int": {"kind": "int", "size": 4, "signed": True, "endian": "little"},
+        },
+        "user_types": {
+            "Point": {
+                "kind": "struct", "size": 8,
+                "fields": {
+                    "x": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "y": {"offset": 4, "type": {"kind": "base", "name": "int"}}
+                }
+            },
+            "Line": {
+                "kind": "struct", "size": 16,
+                "fields": {
+                    "start": {"offset": 0, "type": {"kind": "struct", "name": "Point"}},
+                    "end":   {"offset": 8, "type": {"kind": "struct", "name": "Point"}}
+                }
+            },
+            "Point3D": {
+                "kind": "struct", "size": 12,
+                "fields": {
+                    "x": {"offset": 0, "type": {"kind": "base", "name": "int"}},
+                    "y": {"offset": 4, "type": {"kind": "base", "name": "int"}},
+                    "z": {"offset": 8, "type": {"kind": "base", "name": "int"}}
+                }
+            }
+        },
+        "enums": {}, "symbols": {}
+    }
+    
+    ffi = DFFI(isf)
+    
+    # Setup instances
+    p1 = ffi.new("struct Point")
+    p1.x = 10
+    p1.y = 20
+    
+    p2 = ffi.new("struct Point")
+    p2.x = 100
+    p2.y = 200
+    
+    line = ffi.new("struct Line")
+    
+    # 1. Successful struct-to-struct assignment
+    line.start = p1
+    line.end = p2
+    
+    assert line.start.x == 10
+    assert line.start.y == 20
+    assert line.end.x == 100
+    assert line.end.y == 200
+    
+    # Ensure memory matches exactly
+    assert bytes(line.start) == bytes(p1)
+    assert bytes(line.end) == bytes(p2)
+    
+    # 2. Test cache invalidation (overwrite start with p2)
+    line.start = p2
+    assert line.start.x == 100
+    assert line.start.y == 200
+    assert bytes(line.start) == bytes(p2)
+    
+    # 3. Error: Size mismatch
+    p3d = ffi.new("struct Point3D")
+    with pytest.raises(ValueError, match="Size mismatch: cannot assign struct of size 12"):
+        line.start = p3d
+        
+    # 4. Error: Invalid type assignment
+    with pytest.raises(TypeError, match="Cannot assign int to struct/union field"):
+        line.start = 1234
+        
+    with pytest.raises(TypeError, match="Cannot assign str to struct/union field"):
+        line.start = "not a struct"
