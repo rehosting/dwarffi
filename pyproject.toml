@@ -4,9 +4,6 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dwarffi"
-authors = [
-  { name = "Luke Craig", email = "luke.craig@mit.edu"},
-]
 dynamic = ["version"]
 description = "dwarffi is a Python library for parsing ISF files and providing an interface to access kernel symbols and types."
 readme = "README.md"
@@ -14,13 +11,9 @@ requires-python = ">=3.10"
 dependencies = [
   "msgspec",
 ]
-
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.0.0",
-  "ruff>=0.4.0"
+authors = [
+  { name = "Luke Craig", email = "luke.craig@mit.edu" }
 ]
-
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
@@ -34,6 +27,12 @@ classifiers = [
 [project.urls]
 Repository = "https://github.com/rehosting/dwarffi"
 Issues = "https://github.com/rehosting/dwarffi/issues"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.4.0"
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
