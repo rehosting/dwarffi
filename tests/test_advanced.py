@@ -3,8 +3,7 @@ import json
 import pytest
 
 from dwarffi import DFFI, BoundTypeInstance
-from dwarffi.types import VtypeUserType, VtypeStructField
-    
+from dwarffi.types import VtypeStructField, VtypeUserType
 
 
 @pytest.fixture

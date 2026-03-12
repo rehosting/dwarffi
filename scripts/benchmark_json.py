@@ -13,6 +13,7 @@ import msgspec
 # Import the new ISFData struct from your refactored codebase
 from dwarffi.types import ISFData
 
+
 def generate_heavy_isf_payload() -> bytes:
     print("Generating synthetic heavy ISF payload...")
     isf = {

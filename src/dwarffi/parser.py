@@ -1,7 +1,8 @@
 import io
 import lzma
-import msgspec
 from typing import Any, Dict, List, Optional, Union
+
+import msgspec
 
 from .types import ISFData, VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
 
