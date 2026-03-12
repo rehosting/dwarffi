@@ -1,7 +1,8 @@
 import base64
 import struct
-import msgspec
 from typing import Any, Dict, List, Optional, Tuple, Union
+
+import msgspec
 
 
 class SourceMetadata(msgspec.Struct):

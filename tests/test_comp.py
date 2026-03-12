@@ -61,10 +61,10 @@ from dwarffi.backend import LiveMemoryProxy
 from dwarffi.types import (
     VtypeBaseType,
     VtypeEnum,
+    VtypeStructField,
     VtypeSymbol,
     VtypeUserType,
     _FallbackBytesStruct,
-    VtypeStructField,
 )
 
 # ---------------------------------------------------------------------------
