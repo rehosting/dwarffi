@@ -639,7 +639,34 @@ class BoundTypeInstance:
             valid_len = size - pad_len
             self._instance_buffer[absolute_field_offset : absolute_field_offset + valid_len] = buf_slice[:valid_len]
 
-        elif kind in ("array", "struct", "union"):
+        elif kind in ("struct", "union"):
+            # Allow direct assignment if the incoming value is a BoundTypeInstance
+            if isinstance(value_to_write, BoundTypeInstance):
+                # Ensure the sizes match to prevent buffer overflows
+                if value_to_write._instance_type_def.size != resolved_obj.size:
+                    raise ValueError(
+                        f"Size mismatch: cannot assign struct of size {value_to_write._instance_type_def.size} "
+                        f"to field '{field_name_for_error}' of size {resolved_obj.size}."
+                    )
+                
+                # Extract bytes from the source and copy into the target's buffer slice
+                self._instance_buffer[absolute_field_offset : absolute_field_offset + resolved_obj.size] = bytes(value_to_write)
+                
+            # Optionally, allow raw byte assignments for advanced use cases
+            elif isinstance(value_to_write, (bytes, bytearray, memoryview)):
+                if len(value_to_write) != resolved_obj.size:
+                    raise ValueError(
+                        f"Size mismatch: expected {resolved_obj.size} bytes, got {len(value_to_write)}."
+                    )
+                self._instance_buffer[absolute_field_offset : absolute_field_offset + resolved_obj.size] = value_to_write
+                
+            else:
+                raise TypeError(
+                    f"Cannot assign {type(value_to_write).__name__} to struct/union field '{field_name_for_error}'. "
+                    "Expected a BoundTypeInstance or byte-like object."
+                )
+
+        elif kind == "array":
             raise NotImplementedError(
                 f"Direct assignment to field '{field_name_for_error}' of type '{kind}' is not supported."
             )
