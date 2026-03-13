@@ -652,13 +652,20 @@ class DFFI:
             The newly typed BoundTypeInstance or Ptr.
         """
         t = self._typeof_or_raise(ctype)
+        is_target_pointer = isinstance(t, dict) and t.get("kind") == "pointer"
+
+        if isinstance(value, Ptr):
+            value = value.address
+        elif isinstance(value, BoundTypeInstance) and is_target_pointer:
+            # Allow casting structs directly to pointers 
+            value = self.addressof(value).address
 
         # Casting an integer to a pointer
         if isinstance(value, int):
-            if isinstance(t, dict) and t.get("kind") == "pointer":
+            if is_target_pointer:
                 return Ptr(value, t.get("subtype"), self)
 
-            if hasattr(t, "size"):
+            if hasattr(t, "size") and t.size is not None:
                 buf = bytearray(t.size)
             else:
                 buf = bytearray(8)
