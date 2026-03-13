@@ -1,6 +1,6 @@
 import io
 import lzma
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 import msgspec
 
@@ -15,6 +15,7 @@ class VtypeJson:
     compressed .xz streams) utilizing msgspec for accelerated loading and strict schema 
     enforcement.
     """
+    _isf: ISFData
 
     def __init__(self, isf_input: Union[Dict[str, Any], bytes, str, io.IOBase]):
         """
@@ -55,9 +56,9 @@ class VtypeJson:
                 raise TypeError(f"Input must be a dict, bytes, file path (str), or file-like object. Got {type(isf_input)}.")
                 
         except FileNotFoundError as e:
-            raise FileNotFoundError(f"The ISF JSON file was not found: {isf_input}") from e
+            raise FileNotFoundError(f"The ISF JSON file was not found: {isf_input!r}") from e
         except (IOError, OSError) as e:
-            raise ValueError(f"Could not open or read file '{isf_input}'. Error: {e}") from e
+            raise ValueError(f"Could not open or read file '{isf_input!r}'. Error: {e}") from e
         except msgspec.ValidationError as e:
             err_str = str(e)
             if "Expected `object`" in err_str and "got `array`" in err_str:
@@ -108,8 +109,11 @@ class VtypeJson:
             delta: The integer amount to shift addresses by.
         """
         for sym_obj in self._isf.symbols.values():
-            if sym_obj.address not in [None, 0]:
-                sym_obj.address += delta
+            if sym_obj is None:
+                continue
+            addr = getattr(sym_obj, "address", None)
+            if addr:
+                sym_obj.address = addr + delta
         self._address_to_symbol_list_cache = None
 
     def get_base_type(self, name: str) -> Optional[VtypeBaseType]:
@@ -163,7 +167,7 @@ class VtypeJson:
         if self._address_to_symbol_list_cache is None:
             self._address_to_symbol_list_cache = {}
             for symbol_obj in self._isf.symbols.values():
-                if symbol_obj.address is not None:
+                if symbol_obj is not None and symbol_obj.address is not None:
                     self._address_to_symbol_list_cache.setdefault(symbol_obj.address, []).append(
                         symbol_obj
                     )
@@ -200,11 +204,14 @@ class VtypeJson:
             count, subtype_info = type_info.get("count"), type_info.get("subtype")
             if count is None or subtype_info is None:
                 return None
-            element_size = self.get_type_size(subtype_info)
+            element_size = self.get_type_size(cast(Dict[str, Any], subtype_info))
             return count * element_size if element_size is not None else None
         if kind == "bitfield":
             # For bitfields, the size is the size of the underlying storage unit type
-            return self.get_type_size(type_info.get("type")) if type_info.get("type") else None
+            underlying_type = type_info.get("type")
+            if underlying_type is not None:
+                return self.get_type_size(cast(Dict[str, Any], underlying_type))
+            return None
         return None
 
     def __repr__(self) -> str:

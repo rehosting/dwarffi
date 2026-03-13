@@ -8,19 +8,13 @@ import struct
 import subprocess
 import tempfile
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, TypeAlias, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
 from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
+from .dtyping import VTYPE_CLASSES, BoundType, TypeInfoDict, Vtype
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
 from .types import VtypeBaseType, VtypeEnum, VtypeStructField, VtypeSymbol, VtypeUserType
-
-# Clean, unified Type Aliases
-VTYPE_CLASSES = (VtypeBaseType, VtypeEnum, VtypeUserType)
-BOUND_TYPE_CLASSES = (BoundTypeInstance, BoundArrayView, Ptr)
-
-Vtype: TypeAlias = Union[VtypeBaseType, VtypeEnum, VtypeUserType]
-BoundType: TypeAlias = Union[BoundTypeInstance, BoundArrayView, Ptr]
 
 UNBOUNDED_ARRAY_MAX_BYTES = 64 * 1024   # 64 KiB default (tunable)
 UNBOUNDED_ARRAY_MIN_ELEMS = 1           # at least 1 element
@@ -36,9 +30,9 @@ class DFFI:
 
     def __init__(
         self, 
-        isf_input: Optional[Union[str, dict, List[Union[str, dict]]]] = None,
+        isf_input: Optional[Union[str, Dict[str, Any], List[Union[str, Dict[str, Any]]]]] = None,
         backend: Optional[Union[MemoryBackend, bytes, bytearray]] = None
-    ):
+    ) -> None:
         """
         Initializes the DFFI engine.
 
@@ -50,13 +44,14 @@ class DFFI:
         self.vtypejsons: Dict[str, VtypeJson] = {}
 
         # Configure the backend natively
+        self.backend: Optional[MemoryBackend] = None
         if isinstance(backend, (bytes, bytearray)):
             self.backend = BytesBackend(backend)
-        else:
+        elif backend is not None:
             self.backend = backend
         
         # Safely bound LRU cache tied to the instance lifecycle to prevent memory leaks
-        self._parse_ctype_string = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
+        self._parse_ctype_string: Callable[[str], Union[Vtype, Dict[str, Any], None]] = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
 
         if isf_input is not None:
             if isinstance(isf_input, list):
@@ -69,9 +64,10 @@ class DFFI:
         """Internal helper to add a VtypeJson instance to the engine."""
         self._file_order.append(source)
         self.vtypejsons[source] = vtype_obj
-        self._parse_ctype_string.cache_clear()  # Clear the cache to ensure new types are recognized
+         # Clear the cache to ensure new types are recognized
+        self._parse_ctype_string.cache_clear() # type: ignore[attr-defined]
 
-    def load_isf(self, isf_input: Union[str, dict]) -> None:
+    def load_isf(self, isf_input: Union[str, Dict[str, Any]]) -> None:
         """
         Loads a singular ISF definition from a file path or a direct dictionary.
 
@@ -237,7 +233,7 @@ class DFFI:
             return sym.address
         return None
 
-    def _typeof_or_raise(self, ctype: Union[str, Vtype, BoundType, dict], *, ctx: str = "") -> Union[Vtype, dict]:
+    def _typeof_or_raise(self, ctype: Union[str, Vtype, BoundType, Dict[str, Any]], *, ctx: str = "") -> Union[Vtype, Dict[str, Any]]:
         t = self.typeof(ctype)
         if t is None:
             raise KeyError(f"Unknown type {ctype!r}" + (f" (in {ctx})" if ctx else ""))
@@ -257,7 +253,7 @@ class DFFI:
             results.extend(self.vtypejsons[f].get_symbols_by_address(target_address))
         return results
 
-    def get_type_size(self, in_type_info: dict) -> int:
+    def get_type_size(self, in_type_info: Dict[str, Any]) -> int:
         """Calculates the byte size of a raw ISF type dictionary."""
         type_info = self._resolve_type_info(in_type_info)
         for f in self._file_order:
@@ -269,7 +265,7 @@ class DFFI:
     def _create_instance(
         self,
         type_input: Union[str, Vtype],
-        buffer: Union[bytes, bytearray, memoryview],
+        buffer: Union[bytes, bytearray, memoryview, LiveMemoryProxy],
         instance_offset_in_buffer: int = 0,
         base_address: Optional[int] = None
     ) -> BoundTypeInstance:
@@ -277,6 +273,7 @@ class DFFI:
         Internal factory: Creates a BoundTypeInstance by resolving the type across 
         all loaded ISFs and binding it to the provided buffer.
         """
+        processed_buffer: Any
         if isinstance(buffer, bytes):
             processed_buffer = bytearray(buffer)
         elif isinstance(buffer, (bytearray, memoryview)) or getattr(type(buffer), "__getitem__", None) is not None:
@@ -284,9 +281,13 @@ class DFFI:
         else:
             raise TypeError("Input buffer must be bytes, bytearray, memoryview, or support __getitem__.")
 
+        type_def: Vtype
         if isinstance(type_input, str):
             type_name = type_input
-            type_def = self._typeof_or_raise(type_input)
+            resolved = self._typeof_or_raise(type_input)
+            if isinstance(resolved, dict):
+                raise ValueError(f"Type '{type_name}' resolved to a dictionary, which cannot be directly instantiated.")
+            type_def = resolved
         else:
             type_def = type_input
             type_name = getattr(type_def, "name", "unknown")
@@ -294,14 +295,17 @@ class DFFI:
         if type_def is None:
             raise ValueError(f"Type definition for '{type_name}' not found in any loaded ISF.")
 
+        if not isinstance(type_def, VTYPE_CLASSES):
+            raise TypeError(f"Expected a Vtype class, got {type(type_def)}")
+
         # Validate size
-        if not hasattr(type_def, "size") or type_def.size is None:
+        if getattr(type_def, "size", None) is None:
             type_kind = getattr(type_def, "kind", None)
             if not (type_kind == "void" and getattr(type_def, "size", None) == 0):
                 raise ValueError(f"Type definition for '{type_name}' lacks a valid size.")
 
         # Bounds checking (skip if using a duck-typed backend proxy)
-        if type_def.size is not None and getattr(processed_buffer, "backend", None) is None:
+        if getattr(type_def, "size", None) is not None and getattr(processed_buffer, "backend", None) is None:
             effective_len = len(processed_buffer) - instance_offset_in_buffer
             if type_def.size > effective_len:
                 raise ValueError(
@@ -328,7 +332,7 @@ class DFFI:
         else:
             self.vtypejsons[path].shift_symbol_addresses(delta)
 
-    def _make_subtype_info(self, base_name: str) -> dict:
+    def _make_subtype_info(self, base_name: str) -> Dict[str, Any]:
         """Helper to create ISF-compatible type_info references."""
         base_t = self.typeof(base_name)
         if isinstance(base_t, dict):
@@ -341,7 +345,7 @@ class DFFI:
             return {"kind": "enum", "name": base_t.name}
         return {"name": base_name}
     
-    def _parse_ctype_string_impl(self, ctype: str) -> Union[Vtype, dict, None]:
+    def _parse_ctype_string_impl(self, ctype: str) -> Union[Vtype, Dict[str, Any], None]:
         """Internal uncached parser for C-style strings."""
         # 1. Strip C-style keywords ("struct ", "union ", "enum ") for the lookup
         # but keep a copy for the regex parsers
@@ -376,7 +380,7 @@ class DFFI:
         else:
             return self.get_type(resolved_info["name"])
 
-    def typeof(self, ctype: Union[str, Vtype, BoundType, dict]) -> Union[Vtype, dict, None]:
+    def typeof(self, ctype: Union[str, Vtype, BoundType, Dict[str, Any]]) -> Union[Vtype, Dict[str, Any], None]:
         """
         Resolves a type definition from a string or extracts it from an existing instance.
 
@@ -407,7 +411,7 @@ class DFFI:
             f"Expected string, BoundTypeInstance, Ptr, or BoundArrayView, got {type(ctype)}"
         )
 
-    def sizeof(self, ctype: Union[str, Vtype, BoundType, Any]) -> int:
+    def sizeof(self, ctype: Union[str, Vtype, BoundType, Dict[str, Any], Any]) -> int:
         """
         Calculates the memory size in bytes of the given type or instance.
         
@@ -417,16 +421,17 @@ class DFFI:
         Returns:
             The size in bytes as an integer.
         """
+        t: Union[Vtype, Dict[str, Any]]
         if isinstance(ctype, (str, Ptr, BoundArrayView)):
             t = self._typeof_or_raise(ctype)
+        elif isinstance(ctype, BoundTypeInstance):
+            t = ctype._instance_type_def
         else:
             t = ctype
 
-        size = None
+        size: Optional[int] = None
         if isinstance(t, VTYPE_CLASSES):
-            return t.size
-        elif isinstance(t, BoundTypeInstance):
-            size = t._instance_type_def.size
+            size = t.size
         elif isinstance(t, dict):
             kind = t.get("kind")
             if kind == "pointer":
@@ -473,7 +478,7 @@ class DFFI:
             raise TypeError(f"Type '{ctype}' is not a struct or union.")
 
         offset = 0
-        current_type = t
+        current_type: Union[VtypeUserType, Dict[str, Any]] = t
 
         for field_name in fields_or_indexes:
             if not isinstance(current_type, VtypeUserType):
@@ -490,7 +495,7 @@ class DFFI:
 
             # Advance to the next type in the chain
             if resolved_info.get("kind") in ["struct", "union"]:
-                current_type = resolved_obj
+                current_type = cast(Any, resolved_obj)
             else:
                 current_type = resolved_info
 
@@ -516,14 +521,15 @@ class DFFI:
             # Backend-backed: absolute base + offset within the object
             base_addr = base_addr + cdata._instance_offset
 
-        target_type_info = cdata._instance_type_def
+        # It starts as a Vtype object, but can become a TypeInfoDict if we traverse fields
+        target_type_info: Union[TypeInfoDict, Vtype] = cdata._instance_type_def
 
         if fields_or_indexes:
             # 1. Calculate the absolute buffer offset using recursive offsetof
             base_addr += self.offsetof(cdata._instance_type_name, *fields_or_indexes)
             
             # 2. Resolve the final type info using the O(1) flattened fields
-            current_type = cdata._instance_type_def
+            current_type: Union[TypeInfoDict, Vtype] = cdata._instance_type_def
             for field_name in fields_or_indexes:
                 if not isinstance(current_type, VtypeUserType):
                     break # Should be caught by offsetof, but safety first
@@ -536,12 +542,30 @@ class DFFI:
                 target_type_info = resolved_info
                 
                 # If nested, continue the search in the next struct
-                if target_type_info.get("kind") in ["struct", "union"]:
-                    current_type = resolved_obj
+                if resolved_info.get("kind") in ("struct", "union"):
+                    current_type = cast(Vtype, resolved_obj)
                 else:
                     current_type = target_type_info
 
-        return Ptr(base_addr, target_type_info, self)
+        # Normalization to prevent Ptr.deref() from crashing!
+        final_info: TypeInfoDict
+        if not isinstance(target_type_info, dict):
+            if isinstance(target_type_info, VtypeBaseType):
+                final_info = {"kind": "base", "name": target_type_info.name}
+            elif isinstance(target_type_info, VtypeUserType):
+                final_info = {"kind": target_type_info.kind, "name": target_type_info.name}
+            elif isinstance(target_type_info, VtypeEnum):
+                final_info = {"kind": "enum", "name": target_type_info.name}
+            else:
+                final_info = {"name": "void"}
+        else:
+            final_info = target_type_info
+
+        # C-style Pointer Decay: If taking the address of an array, return a pointer to its elements
+        if final_info.get("kind") == "array":
+            final_info = cast(TypeInfoDict, final_info.get("subtype", {"name": "void"}))
+
+        return Ptr(base_addr, final_info, self)
 
     def _deep_init(self, instance: Any, init: Any) -> None:
         """Recursively initializes complex struct/array instances using standard python lists/dicts."""
@@ -566,7 +590,7 @@ class DFFI:
         elif isinstance(instance, BoundTypeInstance):
             instance[0] = init
 
-    def new(self, ctype: Union[str, Vtype, dict], init: Any = None) -> BoundType:
+    def new(self, ctype: Union[str, Vtype, Dict[str, Any]], init: Any = None) -> BoundType:
         """
         Allocates a new memory buffer for the specified type and binds it.
 
@@ -580,19 +604,20 @@ class DFFI:
         t = self.typeof(ctype)
 
         # 2. Handle dynamic arrays natively
-        if isinstance(t, dict) and t.get("kind") == "array":
-            t = dict(t)  # Make a shallow copy to avoid mutating the original type info
+        t_dict = t if isinstance(t, dict) else None
+        if t_dict is not None and t_dict.get("kind") == "array":
+            t_dict = dict(t_dict)   # Make a shallow copy to avoid mutating the original type info
             if init is not None:
                 if isinstance(init, (bytes, bytearray, str)):
                     if isinstance(init, str):
                         init = init.encode("utf-8")
-                    if t.get("count") == 0:
-                        t["count"] = len(init) + 1  # Add null terminator for C-strings
+                    if t_dict.get("count") == 0:
+                        t_dict["count"] = len(init) + 1  # Add null terminator for C-strings
                 elif isinstance(init, list):
-                    if t.get("count") == 0:
-                        t["count"] = len(init)
+                    if t_dict.get("count") == 0:
+                        t_dict["count"] = len(init)
 
-            size = self.sizeof(t)
+            size = self.sizeof(t_dict)
             buf = bytearray(size)
 
             # Create a dummy struct to hold the array so BoundArrayView works flawlessly
@@ -602,7 +627,7 @@ class DFFI:
             self.vtypejsons[primary_isf_path]._isf.user_types[dummy_name] = VtypeUserType(
                 kind="struct",
                 size=size,
-                fields={"arr": VtypeStructField(type_info=t, offset=0, name="arr")},
+                fields={"arr": VtypeStructField(type_info=t_dict, offset=0, name="arr")},
                 name=dummy_name
             )
 
@@ -617,10 +642,13 @@ class DFFI:
                 elif isinstance(init, list):
                     self._deep_init(arr_view, init)
 
-            return arr_view
+            return cast(BoundArrayView, arr_view)
 
-        if getattr(t, "size", None) is None:
+        if t is None or getattr(t, "size", None) is None:
             raise ValueError(f"Cannot allocate memory for type '{ctype}' with unknown size.")
+
+        if not isinstance(t, VTYPE_CLASSES):
+            raise ValueError(f"Cannot allocate memory for type '{ctype}' (resolved to {type(t)}).")
 
         buf = bytearray(t.size)
         instance = self._create_instance(t, buf)
@@ -652,7 +680,8 @@ class DFFI:
             The newly typed BoundTypeInstance or Ptr.
         """
         t = self._typeof_or_raise(ctype)
-        is_target_pointer = isinstance(t, dict) and t.get("kind") == "pointer"
+        t_dict = t if isinstance(t, dict) else None
+        is_target_pointer = t_dict is not None and t_dict.get("kind") == "pointer"
 
         if isinstance(value, Ptr):
             value = value.address
@@ -662,14 +691,15 @@ class DFFI:
 
         # Casting an integer to a pointer
         if isinstance(value, int):
-            if is_target_pointer:
-                return Ptr(value, t.get("subtype"), self)
+            if is_target_pointer and t_dict is not None:
+                return Ptr(value, t_dict.get("subtype"), self)
 
-            if hasattr(t, "size") and t.size is not None:
-                buf = bytearray(t.size)
-            else:
-                buf = bytearray(8)
-            instance = self._create_instance(t, buf)
+            t_obj: Optional[Vtype] = t if not isinstance(t, dict) else self.get_type(t.get("name", ""))
+            if not isinstance(t_obj, VTYPE_CLASSES):
+                raise TypeError(f"Cannot cast to incomplete or dict type: {ctype}")
+
+            buf = bytearray(getattr(t_obj, "size", 8) or 8)
+            instance = self._create_instance(t_obj, buf)
             instance[0] = value
             return instance
 
@@ -685,7 +715,7 @@ class DFFI:
 
         raise TypeError(f"Cannot cast {type(value)} to {ctype}")
     
-    def from_address(self, ctype: Union[str, Vtype, dict], address: int) -> BoundType:
+    def from_address(self, ctype: Union[str, Vtype, Dict[str, Any]], address: int) -> BoundType:
         """
         Creates a new DFFI instance bound to an absolute address in the configured MemoryBackend.
         Operates on LIVE memory via the LiveMemoryProxy.
@@ -694,15 +724,16 @@ class DFFI:
             raise RuntimeError("Cannot use from_address(): No memory backend was configured.")
 
         t = self.typeof(ctype)
+        t_dict = t if isinstance(t, dict) else None
 
-        if isinstance(t, dict) and t.get("kind") == "pointer":
-            return Ptr(address, t.get("subtype"), self)
+        if t_dict is not None and t_dict.get("kind") == "pointer":
+            return Ptr(address, cast(Dict[str, Any], t_dict.get("subtype")), self)
 
         # Wrap the backend in our magic slicing proxy
         proxy = LiveMemoryProxy(self.backend)
 
-        if isinstance(t, dict) and t.get("kind") == "array":
-            t_view = dict(t)  # keep original count semantics (likely 0)
+        if t_dict is not None and t_dict.get("kind") == "array":
+            t_view = dict(t_dict)  # keep original count semantics (likely 0)
             elem_size = self.sizeof(t_view.get("subtype")) or 1
             count = t_view.get("count", 0)
             if count == 0:
@@ -724,25 +755,28 @@ class DFFI:
             )
 
             instance = self._create_instance(dummy_name, proxy, instance_offset_in_buffer=address)
-            return instance.arr
+            return cast(BoundArrayView, instance.arr)
 
         # If `t` is a dictionary (like when dereferencing a pointer), 
         # resolve it to a concrete type object before passing it to _create_instance!
+        final_t: Optional[Vtype] = None
         if isinstance(t, dict):
             t_name = t.get("name")
             if not t_name:
                 raise ValueError(f"Cannot resolve type dictionary missing 'name': {t}")
-            t_obj = self.get_type(t_name)
-            if t_obj is None:
-                raise ValueError(f"Could not resolve concrete type for '{t_name}'")
-            t = t_obj
+            final_t = self.get_type(t_name)
+        else:
+            final_t = t
 
-        return self._create_instance(t, proxy, instance_offset_in_buffer=address)
+        if not isinstance(final_t, VTYPE_CLASSES):
+            raise ValueError(f"Unable to locate concrete type for '{ctype}'")
+
+        return self._create_instance(final_t, proxy, instance_offset_in_buffer=address)
 
     def from_buffer(
         self,
         ctype: Union[str, Vtype],
-        python_buffer: Union[bytearray, memoryview, bytes],
+        python_buffer: Any,
         offset: int = 0,
         require_writable: bool = False,
         address: Optional[int] = None,
@@ -767,37 +801,41 @@ class DFFI:
         if isinstance(python_buffer, bytes):
             python_buffer = bytearray(python_buffer)
 
+        t_dict = t if isinstance(t, dict) else None
         # Handle pointers and dynamic arrays natively by wrapping them in an array view
-        if isinstance(t, dict) and t.get("kind") in ("array", "pointer"):
-            t = dict(t) # Shallow copy to avoid mutating original type info
-            if t.get("kind") == "pointer":
+        if t_dict is not None and t_dict.get("kind") in ("array", "pointer"):
+            t_dict = dict(t_dict)  # Shallow copy to avoid mutating original type info
+            if t_dict.get("kind") == "pointer":
                 # Treat a bound pointer like an unbounded array of that pointer type
-                t = {"kind": "array", "count": 0, "subtype": t}
+                t_dict = {"kind": "array", "count": 0, "subtype": t_dict}
 
-            elem_size = self.sizeof(t.get("subtype"))
+            elem_size = self.sizeof(t_dict.get("subtype"))
             if elem_size == 0:
                 elem_size = 1
 
-            count = t.get("count", 0)
+            count = t_dict.get("count", 0)
             if count == 0:
                 count = (len(python_buffer) - offset) // elem_size
-                t["count"] = count
+                t_dict["count"] = count
 
             dummy_size = count * elem_size
             
             # Use hash(str(t)) to prevent cache collisions if the same buffer is cast to multiple types
-            dummy_name = f"__dummy_{id(python_buffer)}_{offset}_{hash(str(t))}"
+            dummy_name = f"__dummy_{id(python_buffer)}_{offset}_{hash(str(t_dict))}"
             primary_isf_path = self._file_order[0]
             
             self.vtypejsons[primary_isf_path]._isf.user_types[dummy_name] = VtypeUserType(
                 kind="struct",
                 size=dummy_size,
-                fields={"arr": VtypeStructField(type_info=t, offset=0, name="arr")},
+                fields={"arr": VtypeStructField(type_info=t_dict, offset=0, name="arr")},
                 name=dummy_name
             )
 
             instance = self._create_instance(dummy_name, python_buffer, instance_offset_in_buffer=offset, base_address=address)
-            return instance.arr
+            return cast(BoundArrayView, instance.arr)
+
+        if not isinstance(t, VTYPE_CLASSES):
+            raise TypeError(f"Could not resolve to a strict Vtype definition: {ctype}")
 
         return self._create_instance(t, python_buffer, instance_offset_in_buffer=offset, base_address=address)
 
@@ -829,7 +867,7 @@ class DFFI:
             size = self.sizeof(cdata)
             
         # Return a zero-copy slice
-        return memoryview(buf)[offset : offset + size]
+        return memoryview(cast(Union[bytearray, bytes, memoryview], buf))[offset : offset + size]
 
     def to_bytes(self, cdata: BoundTypeInstance) -> bytes:
         """
@@ -860,7 +898,7 @@ class DFFI:
         src_buf = src._instance_buffer if isinstance(src, BoundTypeInstance) else src
         src_off = src._instance_offset if isinstance(src, BoundTypeInstance) else 0
 
-        dest_buf[dest_off : dest_off + n] = src_buf[src_off : src_off + n]
+        cast(Any, dest_buf)[dest_off : dest_off + n] = src_buf[src_off : src_off + n]
 
     def string(self, cdata: BoundType, maxlen: int = -1) -> bytes:
         """
@@ -877,9 +915,9 @@ class DFFI:
         # If the instance is an enum, return its constant name
         if isinstance(cdata, BoundTypeInstance) and isinstance(cdata._instance_type_def, VtypeEnum):
             val = cdata._get_value() # Returns EnumInstance
-            name = val.name
+            name = getattr(val, "name", None)
             if name:
-                return name.encode("utf-8")
+                return str(name).encode("utf-8")
             return str(int(val)).encode("utf-8") # Fallback to numeric string if name unknown
 
         # 2. Handle standard memory-based strings
@@ -892,7 +930,7 @@ class DFFI:
         # Handle Live Memory Proxy chunked reads
         if hasattr(buf, "backend"):
             if maxlen > 0:
-                byte_data = buf[offset : offset + maxlen]
+                byte_data = bytes(buf[offset : offset + maxlen])
                 null_idx = byte_data.find(b'\x00')
                 return byte_data if null_idx == -1 else byte_data[:null_idx]
             
@@ -900,7 +938,7 @@ class DFFI:
             result = bytearray()
             current_offset = offset
             while True:
-                chunk = buf[current_offset : current_offset + chunk_size]
+                chunk = bytes(buf[current_offset : current_offset + chunk_size])
                 if not chunk:
                     break
                 null_idx = chunk.find(b'\x00')
@@ -925,7 +963,7 @@ class DFFI:
         null_idx = byte_data.find(b'\x00')
         return byte_data if null_idx == -1 else byte_data[:null_idx]
 
-    def unpack(self, cdata: BoundType, count: int = -1) -> Union[list, tuple]:
+    def unpack(self, cdata: BoundType, count: int = -1) -> Union[List[Any], Tuple[Any, ...]]:
         """
         Fast-Path API: Dumps a fully primitive struct or array out to Python in a single C operation.
 
@@ -945,15 +983,17 @@ class DFFI:
             # We can do this if the array's subtype is a simple base type
             t_info = self._resolve_type_info(cdata._array_subtype_info)
             if t_info.get("kind") == "base":
-                base_type = self.get_base_type(t_info.get("name"))
-                if base_type:
-                    base_struct = base_type.get_compiled_struct()
-                    if base_struct:
-                        # Build a multiplier format string, e.g., "<1000I"
-                        fmt = f"{base_struct.format[0]}{count}{base_struct.format[1:]}"
-                        buf = cdata._parent_instance._instance_buffer
-                        offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
-                        return list(struct.unpack_from(fmt, buf, offset))
+                base_name = t_info.get("name")
+                if base_name:
+                    base_type = self.get_base_type(base_name)
+                    if base_type:
+                        base_struct = base_type.get_compiled_struct()
+                        if base_struct:
+                            # Build a multiplier format string, e.g., "<1000I"
+                            fmt = f"{base_struct.format[0]}{count}{base_struct.format[1:]}"
+                            buf = cdata._parent_instance._instance_buffer
+                            offset = cdata._parent_instance._instance_offset + cdata._array_start_offset_in_parent
+                            return list(struct.unpack_from(fmt, buf, offset)) # type: ignore[arg-type]
             
             # Fallback: Array of structs or complex types
             return [cdata[i] for i in range(count)]
@@ -1062,7 +1102,7 @@ class DFFI:
             self._add_vtypejson(pseudo_path, vtype_obj)
 
 
-    def pretty_print(self, cdata: Any, indent: int = 0, name: str = None) -> str:
+    def pretty_print(self, cdata: Any, indent: int = 0, name: Optional[str] = None) -> str:
         """
         Recursively formats a bound instance, array, or pointer into a human-readable string.
         """
@@ -1099,9 +1139,10 @@ class DFFI:
 
             res = [f"{prefix}{field_label}{type_name} {{"]
             flat_fields = type_def.get_flattened_fields(self)
-            for f_name in flat_fields:
-                val = getattr(cdata, f_name)
-                res.append(self.pretty_print(val, indent + 1, f_name))
+            if isinstance(flat_fields, dict):
+                for f_name in flat_fields:
+                    val = getattr(cdata, f_name)
+                    res.append(self.pretty_print(val, indent + 1, f_name))
             res.append(f"{prefix}}}")
             return "\n".join(res)
 
