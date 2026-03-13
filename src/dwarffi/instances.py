@@ -1,13 +1,10 @@
 import difflib
 import struct
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union, cast
 
 from .backend import LiveMemoryProxy
 from .dtyping import FlatFieldsDict, MemoryBuffer, StructLike, TypeAccessor, TypeInfoDict, Vtype
 from .types import VtypeBaseType, VtypeEnum, VtypeUserType
-
-if TYPE_CHECKING:
-    from .dffi import DFFI
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
@@ -993,9 +990,9 @@ class Ptr:
     
     address: int
     _subtype_info: Optional[Union[Dict[str, Any], VtypeBaseType, VtypeEnum, VtypeUserType]]
-    _vtype_accessor: 'DFFI'
+    _vtype_accessor: TypeAccessor
 
-    def __init__(self, address: int, subtype_info: Optional[Union[Dict[str, Any], VtypeBaseType, VtypeEnum, VtypeUserType]], vtype_accessor: "DFFI"):
+    def __init__(self, address: int, subtype_info: Optional[Union[Dict[str, Any], VtypeBaseType, VtypeEnum, VtypeUserType]], vtype_accessor: TypeAccessor):
         self.address = address
         self._subtype_info = subtype_info
         self._vtype_accessor = vtype_accessor
@@ -1039,13 +1036,20 @@ class Ptr:
          # If the target is ALSO a pointer, we must read the raw pointer value from memory
         if isinstance(subtype, dict) and subtype.get("kind") == "pointer":
             backend = getattr(self._vtype_accessor, "backend", None)
-            if backend is None: 
+            if backend is None:
                 raise RuntimeError("Cannot dereference pointer chain without a configured memory backend.")
             pbt = self._vtype_accessor.get_base_type("pointer")
             if pbt is None: 
                 raise RuntimeError("Base type 'pointer' not found in loaded ISF.")
-            d = backend.read(self.address, pbt.size)
-            return Ptr(pbt.get_compiled_struct().unpack(d)[0], subtype.get("subtype"), self._vtype_accessor)
+                
+            cs = pbt.get_compiled_struct()
+            if cs is None:
+                raise RuntimeError("Could not compile pointer struct.")
+                
+            size = pbt.size
+            data = backend.read(self.address, size)
+            target_addr = cs.unpack(data)[0]
+            return Ptr(target_addr, subtype.get("subtype"), self._vtype_accessor)
             
         return self._vtype_accessor.from_address(subtype, self.address)
 
