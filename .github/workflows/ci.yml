@@ -48,7 +48,7 @@ jobs:
         run: ruff check .
 
       - name: Mypy
-        run: mypy
+        run: mypy src
 
       - name: Pytest
         run: pytest -q
