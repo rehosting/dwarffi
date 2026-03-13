@@ -1,9 +1,18 @@
 import base64
 import struct
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import msgspec
 
+if TYPE_CHECKING:
+    from .dtyping import FlatFieldsDict, StructLike, TypeAccessor
+else:
+    # Provide runtime dummies so msgspec's type evaluation doesn't crash
+    TypeAccessor = Any
+    StructLike = Any
+    FlatFieldsDict = Any
+
+Endian = Literal["little", "big"]
 
 class SourceMetadata(msgspec.Struct):
     """Represents source file metadata within the ISF, tracking provenance."""
@@ -21,7 +30,7 @@ class UnixMetadata(msgspec.Struct):
     symbols: List[Optional[SourceMetadata]] = msgspec.field(default_factory=list)
     types: List[Optional[SourceMetadata]] = msgspec.field(default_factory=list)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         # Filter out null entries
         self.symbols = [s for s in self.symbols if s is not None]
         self.types = [t for t in self.types if t is not None]
@@ -50,8 +59,12 @@ class _FallbackIntStruct:
     """
 
     __slots__ = ("size", "signed", "endian", "format")
+    size: int
+    signed: bool
+    endian: Endian
+    format: str
 
-    def __init__(self, size: int, signed: bool, endian: str):
+    def __init__(self, size: int, signed: bool, endian: Endian):
         self.size = size
         self.signed = signed
         self.endian = endian
@@ -82,6 +95,9 @@ class _FallbackIntStruct:
 class _FallbackBytesStruct:
     """Duck-type for opaque or un-parseable base types (e.g. 80-bit floats, SIMD vectors)."""
     __slots__ = ("size", "format")
+    size: int
+    format: str
+
     def __init__(self, size: int):
         self.size = size
         self.format = ""
@@ -111,9 +127,9 @@ class VtypeBaseType(msgspec.Struct):
     kind: str = "int"
     endian: str = "little"
     name: str = "" 
-    _compiled_struct: Any = msgspec.field(default=None)
+    _compiled_struct: Optional[StructLike] = msgspec.field(default=None)
 
-    def get_compiled_struct(self) -> Any:
+    def get_compiled_struct(self) -> Optional[StructLike]:
         """
         Lazily compiles and returns the `struct.Struct` object for this type.
         Returns a fallback wrapper for arbitrary integer sizes.
@@ -153,7 +169,7 @@ class VtypeBaseType(msgspec.Struct):
 
         if fmt_char:
             try:
-                self._compiled_struct = struct.Struct(endian_char + fmt_char)
+                self._compiled_struct = cast(StructLike, struct.Struct(endian_char + fmt_char))
                 return self._compiled_struct
             except struct.error:
                 # Catch formats unsupported by the running Python version (e.g., F/D in < 3.14)
@@ -161,11 +177,11 @@ class VtypeBaseType(msgspec.Struct):
  
         # Fallback to pure Python byte manipulation for odd sizes like __int128_t (16 bytes)
         if self.kind in ("int", "pointer"):
-            self._compiled_struct = _FallbackIntStruct(self.size, self.signed, self.endian)
+            self._compiled_struct = cast(StructLike, _FallbackIntStruct(self.size, self.signed, cast(Endian, self.endian)))
             return self._compiled_struct
 
         # For unhandled floats (80-bit, 128-bit) or SIMD vectors, fall back to raw bytes.
-        self._compiled_struct = _FallbackBytesStruct(self.size)
+        self._compiled_struct = cast(StructLike, _FallbackBytesStruct(self.size))
         return self._compiled_struct
 
     def __repr__(self) -> str:
@@ -195,21 +211,21 @@ class VtypeUserType(msgspec.Struct):
     """
     kind: str
     size: int = 0
-    fields: Dict[str, Optional[VtypeStructField]] = msgspec.field(default_factory=dict)
+    fields: Dict[str, VtypeStructField] = msgspec.field(default_factory=dict)
     name: str = ""
-    _flattened_fields: Optional[Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]] = msgspec.field(default=None)
-    _aggregated_struct: Optional[struct.Struct] = msgspec.field(default=None)
+    _flattened_fields: Optional[FlatFieldsDict] = msgspec.field(default=None)
+    _aggregated_struct: Optional[StructLike] = msgspec.field(default=None)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.fields:
-            clean_fields = {}
+            clean_fields: Dict[str, VtypeStructField] = {}
             for k, v in self.fields.items():
                 if v is not None:
                     v.name = k
                     clean_fields[k] = v
             self.fields = clean_fields
 
-    def get_flattened_fields(self, vtype_accessor: Any) -> Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]]:
+    def get_flattened_fields(self, vtype_accessor: TypeAccessor) -> FlatFieldsDict:
         """
         Builds and caches an O(1) lookup table for all fields.
         Returns a mapping of: field_name -> (field_def, absolute_offset, resolved_type_info, resolved_type_obj)
@@ -219,17 +235,17 @@ class VtypeUserType(msgspec.Struct):
         if self._flattened_fields is not None:
             return self._flattened_fields
 
-        flattened: Dict[str, Tuple[VtypeStructField, int, Dict[str, Any], Any]] = {}
+        flattened: FlatFieldsDict = {}
 
-        def _flatten(t_def: VtypeUserType, current_offset: int):
+        def _flatten(t_def: VtypeUserType, current_offset: int) -> None:
             for name, field in t_def.fields.items():
                 # Pre-resolve typedefs and target type info
                 resolved_info = vtype_accessor._resolve_type_info(field.type_info)
                 kind = resolved_info.get("kind")
                 t_name = resolved_info.get("name")
                 
-                # Pre-fetch the concrete type object
-                resolved_obj = None
+                # Explicity type this to prevent None union drift
+                resolved_obj: Optional[Union[VtypeBaseType, VtypeEnum, VtypeUserType]] = None
                 if kind == "base" and t_name:
                     resolved_obj = vtype_accessor.get_base_type(t_name)
                 elif kind == "enum" and t_name:
@@ -248,7 +264,7 @@ class VtypeUserType(msgspec.Struct):
         self._flattened_fields = flattened
         return self._flattened_fields
 
-    def get_aggregated_struct(self, vtype_accessor: Any) -> Optional[struct.Struct]:
+    def get_aggregated_struct(self, vtype_accessor: Any) -> Optional[StructLike]:
         """
         Attempts to compile a single `struct.Struct` for the entire object.
         
@@ -277,10 +293,8 @@ class VtypeUserType(msgspec.Struct):
             # Use the pre-resolved info
             if resolved_info.get("kind") != "base":
                 return None 
-                
             # Use the pre-resolved object
-            base_type = resolved_obj
-            if not base_type:
+            if not isinstance(resolved_obj, VtypeBaseType):
                 return None
 
             # Handle compiler padding gaps with 'x'
@@ -288,16 +302,16 @@ class VtypeUserType(msgspec.Struct):
                 fmt_string += f"{abs_offset - current_offset}x"
                 current_offset = abs_offset
                 
-            base_struct = base_type.get_compiled_struct()
+            base_struct = resolved_obj.get_compiled_struct()
             # If base_struct is None, or it's a _FallbackIntStruct lacking a formatting char
-            if not base_struct or not base_struct.format:
+            if not base_struct or not getattr(base_struct, "format", ""):
                 return None
                 
             fmt_string += base_struct.format[-1]
-            current_offset += base_type.size
+            current_offset += resolved_obj.size
 
         try:
-            self._aggregated_struct = struct.Struct(fmt_string)
+            self._aggregated_struct = cast(StructLike, struct.Struct(fmt_string))
         except struct.error:
             self._aggregated_struct = None
             
@@ -441,27 +455,43 @@ class ISFData(msgspec.Struct):
     symbols: Dict[str, Optional[VtypeSymbol]] = msgspec.field(default_factory=dict)
     typedefs: Dict[str, Any] = msgspec.field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.base_types:
-            self.base_types = {k: v for k, v in self.base_types.items() if v is not None}
-            for k, v in self.base_types.items():
-                v.name = k
+            clean_base: Dict[str, Optional[VtypeBaseType]] = {}
+            for k, v_base in self.base_types.items():
+                if v_base is not None:
+                    v_base.name = k
+                    clean_base[k] = v_base
+            self.base_types = clean_base
         else:
             self.base_types = {}
 
         if self.user_types:
-            self.user_types = {k: v for k, v in self.user_types.items() if v is not None}
-            for k, v in self.user_types.items():
-                v.name = k
+            clean_user: Dict[str, Optional[VtypeUserType]] = {}
+            for k, v_user in self.user_types.items():
+                if v_user is not None:
+                    v_user.name = k
+                    clean_user[k] = v_user
+            self.user_types = clean_user
         else:
             self.user_types = {}
 
         if self.enums:
-            self.enums = {k: v for k, v in self.enums.items() if v is not None}
-            for k, v in self.enums.items():
-                v.name = k
+            clean_enums: Dict[str, Optional[VtypeEnum]] = {}
+            for k, v_enum in self.enums.items():
+                if v_enum is not None:
+                    v_enum.name = k
+                    clean_enums[k] = v_enum
+            self.enums = clean_enums
+        else:
+            self.enums = {}
 
         if self.symbols:
-            self.symbols = {k: v for k, v in self.symbols.items() if v is not None}
-            for k, v in self.symbols.items():
-                v.name = k
+            clean_symbols: Dict[str, Optional[VtypeSymbol]] = {}
+            for k, v_sym in self.symbols.items():
+                if v_sym is not None:
+                    v_sym.name = k
+                    clean_symbols[k] = v_sym
+            self.symbols = clean_symbols
+        else:
+            self.symbols = {}
