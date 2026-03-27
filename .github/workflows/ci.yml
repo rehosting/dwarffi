@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euxo pipefail
           if command -v go >/dev/null 2>&1; then
-            go install github.com/volatilityfoundation/dwarf2json@latest
+            go install github.com/rehosting/dwarf2json@latest
             echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           else
             echo "Go not available; skipping dwarf2json install"

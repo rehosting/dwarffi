@@ -23,6 +23,12 @@ You can also find many symbol tables in ISF format on [Volatility3's symbols rep
 
 This project builds on a tremendous amount of prior work in the volatility community and takes inspiration from projects like `ctypes`, `cffi`, `pyelftools`, and `volatility3`'s symbol handling. The core innovation is the seamless integration of ISF as a first-class type system in Python, with powerful features for live memory access and dynamic type generation.
 
+## On dwarf2json
+
+We've forked dwarf2json to add support for function signatures and to generate more complete ISF files that include function metadata. This allows `dwarffi` to provide a richer experience when working with functions, including parameter types and return types. [See the fork here](https://github.com/rehosting/dwarf2json)
+
+You may still use the original volatility version of dwarf2json if you don't need function signatures, but we recommend using our fork for the best experience with `dwarffi`.
+
 
 ---
 
