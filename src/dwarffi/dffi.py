@@ -14,7 +14,14 @@ from .backend import BytesBackend, LiveMemoryProxy, MemoryBackend
 from .dtyping import VTYPE_CLASSES, BoundType, TypeInfoDict, Vtype
 from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
-from .types import VtypeBaseType, VtypeEnum, VtypeStructField, VtypeSymbol, VtypeUserType
+from .types import (
+    VtypeBaseType,
+    VtypeEnum,
+    VtypeFunction,
+    VtypeStructField,
+    VtypeSymbol,
+    VtypeUserType,
+)
 
 UNBOUNDED_ARRAY_MAX_BYTES = 64 * 1024   # 64 KiB default (tunable)
 UNBOUNDED_ARRAY_MIN_ELEMS = 1           # at least 1 element
@@ -42,6 +49,7 @@ class DFFI:
         """
         self._file_order: List[str] = []
         self.vtypejsons: Dict[str, VtypeJson] = {}
+        self._warned_missing_functions = False
 
         # Configure the backend natively
         self.backend: Optional[MemoryBackend] = None
@@ -238,6 +246,35 @@ class DFFI:
         if t is None:
             raise KeyError(f"Unknown type {ctype!r}" + (f" (in {ctx})" if ctx else ""))
         return t
+
+    @property
+    def functions(self) -> Dict[str, "VtypeFunction"]:
+        """Returns a dictionary of all functions across all loaded ISF files."""
+        merged = {}
+        for path in reversed(self._file_order):
+            # Assign to a variable after the check for clarity and type narrowing
+            functions_map = self.vtypejsons[path]._isf.functions
+            if functions_map is None:
+                if not self._warned_missing_functions:
+                    print(f"Warning: ISF file '{path}' is missing the 'functions' key. Skipping function loading for this file.")
+                    self._warned_missing_functions = True
+                continue
+        
+            # Now, mypy knows functions_map is a dictionary
+            for func_name in functions_map.keys():
+                f = self.get_function(func_name)
+                if f:
+                    merged[func_name] = f
+        return merged
+
+
+    def get_function(self, name: str) -> Optional[VtypeFunction]:
+        """Finds a function signature across all loaded ISFs."""
+        for f in reversed(self._file_order):
+            if res := self.vtypejsons[f].get_function(name):
+                # Bind the engine so .type and .return_type properties resolve natively!
+                return res.bind(self)
+        return None
 
     def get_type(self, name: str) -> Optional[Vtype]:
         """General lookup for any type by name."""

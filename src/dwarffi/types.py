@@ -396,6 +396,141 @@ class VtypeEnum(msgspec.Struct):
     def __str__(self) -> str:
         return self.pretty_print()
 
+class VtypeTypeRef:
+    """A friendly wrapper around ISF type reference dictionaries."""
+    def __init__(self, ref: Dict[str, Any]):
+        self._ref = ref
+
+    @property
+    def name(self) -> Optional[str]:
+        return self._ref.get("name")
+
+    @property
+    def kind(self) -> Optional[str]:
+        return self._ref.get("kind")
+
+    @property
+    def subtype(self) -> Optional["VtypeTypeRef"]:
+        if "subtype" in self._ref:
+            return VtypeTypeRef(self._ref["subtype"])
+        return None
+
+    @property
+    def raw(self) -> Dict[str, Any]:
+        """Returns the raw ISF dictionary reference."""
+        return self._ref
+
+    def __getitem__(self, key: str) -> Any:
+        """Fallback to allow dictionary-style access like ref['name']."""
+        return self._ref[key]
+
+    def __repr__(self) -> str:
+        if self.name:
+            return f"<VtypeTypeRef kind='{self.kind}' name='{self.name}'>"
+        elif self.subtype:
+            return f"<VtypeTypeRef kind='{self.kind}' subtype={self.subtype}>"
+        return f"<VtypeTypeRef kind='{self.kind}'>"
+
+
+class VtypeParameter(msgspec.Struct):
+    """Represents a formal parameter in a function signature."""
+    name: str = ""
+    type_info: Dict[str, Any] = msgspec.field(name="type", default_factory=dict)
+    
+    # Internal hook to the DFFI engine
+    _dffi: Any = msgspec.field(default=None)
+
+    @property
+    def type(self) -> Any:
+        """Returns the fully resolved DFFI type (VtypeBaseType, VtypeUserType, etc)."""
+        if self._dffi:
+            return self._dffi.typeof(self.type_info)
+        return self.type_info
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"name": self.name, "type": self.type_info}
+
+    def pretty_print(self) -> str:
+        """Safely formats the parameter for C-like printing using the raw dictionary."""
+        t = self.type_info
+        kind = t.get("kind", "unknown")
+        name_str = t.get("name") or kind
+        
+        if kind == "pointer":
+            sub = t.get("subtype", {})
+            name_str = f"{(sub.get('name') if sub.get('name') else 'void')}*"
+        elif kind == "array":
+            sub = t.get("subtype", {})
+            sub_name = sub.get("name") if sub.get("name") else "void"
+            count = t.get("count", "")
+            return f"{sub_name} {self.name}[{count}]"
+            
+        return f"{name_str} {self.name}".strip()
+
+    def __str__(self) -> str:
+        return self.pretty_print()
+
+
+class VtypeFunction(msgspec.Struct):
+    """Represents a C function signature."""
+    address: Optional[int] = None
+    return_type_info: Dict[str, Any] = msgspec.field(name="return_type", default_factory=dict)
+    parameters: List[VtypeParameter] = msgspec.field(default_factory=list)
+    name: str = ""
+    
+    # Internal hook to the DFFI engine
+    _dffi: Any = msgspec.field(default=None)
+
+    @property
+    def return_type(self) -> Any:
+        """Returns the fully resolved DFFI return type."""
+        if self._dffi:
+            return self._dffi.typeof(self.return_type_info)
+        return self.return_type_info
+
+    @property
+    def args(self) -> List[VtypeParameter]:
+        """Alias for parameters."""
+        return self.parameters
+
+    def bind(self, dffi: Any) -> "VtypeFunction":
+        """Binds the DFFI engine to the function and its parameters for type resolution."""
+        self._dffi = dffi
+        for p in self.parameters:
+            p._dffi = dffi
+        return self
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "address": self.address,
+            "return_type": self.return_type_info,
+            "parameters": [p.to_dict() for p in self.parameters]
+        }
+
+    def pretty_print(self) -> str:
+        """Returns a C-like formatted string of the function signature."""
+        ret = self.return_type_info
+        kind = ret.get("kind", "void")
+        ret_str = ret.get("name") or kind
+        
+        if kind == "pointer":
+            sub = ret.get("subtype", {})
+            ret_str = f"{(sub.get('name') if sub.get('name') else 'void')}*"
+            
+        params_str = ", ".join(p.pretty_print() for p in self.parameters)
+        if not params_str:
+            params_str = "void"
+            
+        addr_str = f" // @ {self.address:#x}" if self.address is not None else ""
+        return f"{ret_str} {self.name}({params_str});{addr_str}"
+
+    def __str__(self) -> str:
+        return self.pretty_print()
+
+    def __repr__(self) -> str:
+        addr = f"{self.address:#x}" if self.address is not None else "N/A"
+        return f"<VtypeFunction Name='{self.name}' Address={addr} Args={len(self.parameters)}>"
 
 class VtypeSymbol(msgspec.Struct):
     """Represents a global symbol (function or variable) and its memory location."""
@@ -454,6 +589,7 @@ class ISFData(msgspec.Struct):
     enums: Dict[str, Optional[VtypeEnum]] = msgspec.field(default_factory=dict)
     symbols: Dict[str, Optional[VtypeSymbol]] = msgspec.field(default_factory=dict)
     typedefs: Dict[str, Any] = msgspec.field(default_factory=dict)
+    functions: Optional[Dict[str, Optional[VtypeFunction]]] = None
 
     def __post_init__(self) -> None:
         if self.base_types:
@@ -495,3 +631,11 @@ class ISFData(msgspec.Struct):
             self.symbols = clean_symbols
         else:
             self.symbols = {}
+        
+        if self.functions is not None:
+            clean_funcs: Dict[str, Optional[VtypeFunction]] = {}
+            for k, v_func in self.functions.items():
+                if v_func is not None:
+                    v_func.name = k
+                    clean_funcs[k] = v_func
+            self.functions = clean_funcs

@@ -4,7 +4,15 @@ from typing import Any, Dict, List, Optional, Union, cast
 
 import msgspec
 
-from .types import ISFData, VtypeBaseType, VtypeEnum, VtypeMetadata, VtypeSymbol, VtypeUserType
+from .types import (
+    ISFData,
+    VtypeBaseType,
+    VtypeEnum,
+    VtypeFunction,
+    VtypeMetadata,
+    VtypeSymbol,
+    VtypeUserType,
+)
 
 
 class VtypeJson:
@@ -131,6 +139,12 @@ class VtypeJson:
     def get_symbol(self, name: str) -> Optional[VtypeSymbol]:
         """Retrieves a cached VtypeSymbol object by name."""
         return self._isf.symbols.get(name)
+    
+    def get_function(self, name: str) -> Optional[VtypeFunction]:
+        """Retrieves a cached VtypeFunction object by name."""
+        if self._isf.functions is None:
+            return None
+        return self._isf.functions.get(name)
 
     def get_type(self, name: str) -> Optional[Union[VtypeUserType, VtypeBaseType, VtypeEnum]]:
         """
@@ -215,7 +229,8 @@ class VtypeJson:
         return None
 
     def __repr__(self) -> str:
+        f_count = len(self._isf.functions) if self._isf.functions is not None else "Unsupported"
         return (
             f"<VtypeJson BaseTypes={len(self._isf.base_types)} UserTypes={len(self._isf.user_types)} "
-            f"Enums={len(self._isf.enums)} Symbols={len(self._isf.symbols)}>"
+            f"Enums={len(self._isf.enums)} Symbols={len(self._isf.symbols)} Functions={f_count}>"
         )
