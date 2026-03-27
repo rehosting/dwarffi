@@ -76,7 +76,9 @@ def test_functions_warning_on_missing_key(mock_isf_without_functions, capsys):
     assert "<dict_" in captured  # Verify it printed the pseudo-path for the dict
     
     # 3. Trigger again to ensure the flag prevents duplicate prints
-    print(dffi.functions)
+    # Just access the property; do not use print() or capsys will catch it!
+    _ = dffi.functions 
+    
     captured_second = capsys.readouterr().out
     assert captured_second == ""
 
