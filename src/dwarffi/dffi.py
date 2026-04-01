@@ -1070,7 +1070,7 @@ class DFFI:
         dwarf2json_cmd = dwarf2json_cmd or get_dwarf2json_path()
         if dwarf2json_cmd is None:
             raise RuntimeError(
-                f"'{dwarf2json_cmd}' not found in PATH.\n"
+                "'dwarf2json' not found in PATH.\n"
                 "dwarffi requires dwarf2json to extract type info from compiled C code.\n"
                 "Please download or build it from: https://github.com/volatilityfoundation/dwarf2json"
             )
