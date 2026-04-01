@@ -36,10 +36,37 @@ def mock_subprocess_run(cmd, **kwargs):
 
 def test_cdef_success(tmp_path):
     ffi = DFFI()
+    
+    # Dynamically mock the path so dwarf2json and gcc have distinct paths
+    def mock_which(cmd, *args, **kwargs):
+        return f"/usr/bin/{cmd}"
 
-    # Mock shutil.which to pretend our tools exist in PATH,
-    # and subprocess to mock compilation output.
-    with mock.patch("shutil.which", return_value="/usr/bin/mocked_tool"):
+    def mock_subprocess_run(cmd, **kwargs):
+        class MockCompletedProcess:
+            def __init__(self, stdout):
+                self.stdout = stdout
+
+        # Use 'in' to check the path since it now resolves to /usr/bin/dwarf2json
+        if "dwarf2json" in cmd[0]:
+            fake_isf = {
+                "metadata": {},
+                "base_types": {
+                    "custom_int": {"kind": "int", "size": 4, "signed": True, "endian": "little"}
+                },
+                "user_types": {},
+                "enums": {},
+                "symbols": {},
+                "typedefs": {},
+            }
+            return MockCompletedProcess(json.dumps(fake_isf))
+
+        if "gcc" in cmd[0] or "clang" in cmd[0]:
+            return MockCompletedProcess("")
+
+        raise ValueError(f"Unexpected command: {cmd}")
+
+    # Apply the new dynamic side_effect
+    with mock.patch("shutil.which", side_effect=mock_which):
         with mock.patch("subprocess.run", side_effect=mock_subprocess_run):
             # Test compiling some arbitrary C code and saving it to an XZ file
             out_file = tmp_path / "types.json.xz"
