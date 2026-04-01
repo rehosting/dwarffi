@@ -16,3 +16,4 @@ dist/
 
 .coverage
 htmlcov/
+src/dwarffi/_version.py
