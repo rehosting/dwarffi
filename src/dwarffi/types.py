@@ -128,6 +128,42 @@ class VtypeBaseType(msgspec.Struct):
     endian: str = "little"
     name: str = "" 
     _compiled_struct: Optional[StructLike] = msgspec.field(default=None)
+    _dffi: Any = msgspec.field(default=None)
+
+    def bind(self, dffi: Any) -> "VtypeBaseType": # Use the class name if Self isn't imported
+        """Binds the DFFI engine to the type for instantiation."""
+        self._dffi = dffi
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Syntactic sugar: Allows instantiating the type directly via `my_type(...)`.
+        Delegates to `dffi.new()`.
+        """
+        if not self._dffi:
+            raise RuntimeError(f"Type '{self.name}' is not bound to a DFFI engine.")
+        
+        init = None
+        if args:
+            # Pass single argument directly (like a dict, bytes, or base value)
+            if len(args) == 1 and not kwargs:
+                init = args[0]
+            else:
+                # Pass multiple positional arguments as a list (useful for arrays)
+                init = list(args)
+        
+        if kwargs:
+            if init is not None:
+                if isinstance(init, dict):
+                    # Merge positional dict with kwargs
+                    init = {**init, **kwargs}
+                else:
+                    raise ValueError("Cannot mix positional arguments and keyword arguments for initialization.")
+            else:
+                # Use kwargs directly as the initialization dict for structs
+                init = kwargs
+
+        return self._dffi.new(self, init)
 
     def get_compiled_struct(self) -> Optional[StructLike]:
         """
@@ -215,6 +251,42 @@ class VtypeUserType(msgspec.Struct):
     name: str = ""
     _flattened_fields: Optional[FlatFieldsDict] = msgspec.field(default=None)
     _aggregated_struct: Optional[StructLike] = msgspec.field(default=None)
+    _dffi: Any = msgspec.field(default=None)
+
+    def bind(self, dffi: Any) -> "VtypeUserType": # Use the class name if Self isn't imported
+        """Binds the DFFI engine to the type for instantiation."""
+        self._dffi = dffi
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Syntactic sugar: Allows instantiating the type directly via `my_type(...)`.
+        Delegates to `dffi.new()`.
+        """
+        if not self._dffi:
+            raise RuntimeError(f"Type '{self.name}' is not bound to a DFFI engine.")
+        
+        init = None
+        if args:
+            # Pass single argument directly (like a dict, bytes, or base value)
+            if len(args) == 1 and not kwargs:
+                init = args[0]
+            else:
+                # Pass multiple positional arguments as a list (useful for arrays)
+                init = list(args)
+        
+        if kwargs:
+            if init is not None:
+                if isinstance(init, dict):
+                    # Merge positional dict with kwargs
+                    init = {**init, **kwargs}
+                else:
+                    raise ValueError("Cannot mix positional arguments and keyword arguments for initialization.")
+            else:
+                # Use kwargs directly as the initialization dict for structs
+                init = kwargs
+
+        return self._dffi.new(self, init)
 
     def __post_init__(self) -> None:
         if self.fields:
@@ -362,6 +434,42 @@ class VtypeEnum(msgspec.Struct):
     constants: Dict[str, int] = msgspec.field(default_factory=dict)
     name: str = ""
     _val_to_name: Optional[Dict[int, str]] = msgspec.field(default=None)
+    _dffi: Any = msgspec.field(default=None)
+
+    def bind(self, dffi: Any) -> "VtypeEnum": # Use the class name if Self isn't imported
+        """Binds the DFFI engine to the type for instantiation."""
+        self._dffi = dffi
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        """
+        Syntactic sugar: Allows instantiating the type directly via `my_type(...)`.
+        Delegates to `dffi.new()`.
+        """
+        if not self._dffi:
+            raise RuntimeError(f"Type '{self.name}' is not bound to a DFFI engine.")
+        
+        init = None
+        if args:
+            # Pass single argument directly (like a dict, bytes, or base value)
+            if len(args) == 1 and not kwargs:
+                init = args[0]
+            else:
+                # Pass multiple positional arguments as a list (useful for arrays)
+                init = list(args)
+        
+        if kwargs:
+            if init is not None:
+                if isinstance(init, dict):
+                    # Merge positional dict with kwargs
+                    init = {**init, **kwargs}
+                else:
+                    raise ValueError("Cannot mix positional arguments and keyword arguments for initialization.")
+            else:
+                # Use kwargs directly as the initialization dict for structs
+                init = kwargs
+
+        return self._dffi.new(self, init)
 
     def get_name_for_value(self, value: int) -> Optional[str]:
         """Performs a reverse lookup to find a constant name for an integer value."""
