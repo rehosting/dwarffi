@@ -15,9 +15,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare:
+    name: Determine Next Version
     runs-on: ubuntu-latest
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      v-version: ${{ steps.version.outputs.v-version }}
     steps:
       - name: Install dependencies and label git workspace safe
         run: |
@@ -37,24 +40,156 @@ jobs:
         with:
           use_api: true
 
+  build-binaries:
+    name: Build dwarf2json (${{ matrix.goos }}/${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            plat_tag: manylinux2014_x86_64
+            ext: ""
+          - goos: linux
+            goarch: arm64
+            plat_tag: manylinux2014_aarch64
+            ext: ""
+          - goos: darwin
+            goarch: amd64
+            plat_tag: macosx_10_15_x86_64
+            ext: ""
+          - goos: darwin
+            goarch: arm64
+            plat_tag: macosx_11_0_arm64
+            ext: ""
+          - goos: windows
+            goarch: amd64
+            plat_tag: win_amd64
+            ext: ".exe"
+
+    steps:
+      # Adjust this repository to point to your fork containing the custom functions modifications
+      - name: Checkout dwarf2json
+        uses: actions/checkout@v4
+        with:
+          repository: rehosting/dwarf2json 
+          path: dwarf2json
+        
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install UPX
+        run: sudo apt-get install -y upx
+
+      - name: Build and Compress
+        working-directory: dwarf2json
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -trimpath -ldflags="-s -w" -o dwarf2json${{ matrix.ext }} main.go
+          upx --best --lzma dwarf2json${{ matrix.ext }}
+
+      - name: Upload Binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.plat_tag }}
+          path: dwarf2json/dwarf2json${{ matrix.ext }}
+
+  build-generic:
+    name: Build Generic Wheel & SDist
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DWARFFI: ${{ needs.prepare.outputs.version }}
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout dwarffi
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-          cache: pip
+          python-version: '3.12'
 
-      - name: Force package version for build (no commit)
-        run: |
-          # dist name "dwarffi" -> env suffix "DWARFFI"
-          echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DWARFFI=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
-          echo "SETUPTOOLS_SCM_PRETEND_VERSION=${{ steps.version.outputs.version }}" >> $GITHUB_ENV
+      - name: Install Build Tools
+        run: python -m pip install --upgrade pip build
 
-      - name: Build distributions
+      - name: Ensure empty bin directory
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install build
-          python -m build
+          mkdir -p src/dwarffi/bin
+          touch src/dwarffi/bin/.keep
+
+      - name: Build SDist and Generic Wheel
+        run: python -m build
+
+      - name: Upload Generic Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-generic
+          path: dist/*
+
+  build-platform-wheels:
+    name: Build Wheel (${{ matrix.plat_tag }})
+    needs: [prepare, build-binaries]
+    runs-on: ubuntu-latest
+    env:
+      SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DWARFFI: ${{ needs.prepare.outputs.version }}
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.prepare.outputs.version }}
+    strategy:
+      matrix:
+        plat_tag: 
+          - manylinux2014_x86_64
+          - manylinux2014_aarch64
+          - macosx_10_15_x86_64
+          - macosx_11_0_arm64
+          - win_amd64
+
+    steps:
+      - name: Checkout dwarffi
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Build Tools
+        run: python -m pip install --upgrade pip build wheel
+
+      - name: Download Target Binary
+        uses: actions/download-artifact@v4
+        with:
+          name: binary-${{ matrix.plat_tag }}
+          path: src/dwarffi/bin/
+
+      - name: Build Temporary Wheel
+        run: python -m build --wheel
+
+      - name: Retag Wheel for Platform
+        run: |
+          python -m wheel tags --platform-tag ${{ matrix.plat_tag }} --remove dist/*.whl
+
+      - name: Upload Platform Wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.plat_tag }}
+          path: dist/*.whl
+
+  release:
+    name: Publish and Release
+    needs: [prepare, build-generic, build-platform-wheels]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gather all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist/
+          merge-multiple: true
 
       - name: Publish to PyPI (Trusted Publishing)
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -64,8 +199,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.version.outputs.v-version }}
-          name: Release ${{ steps.version.outputs.v-version }}
+          tag_name: ${{ needs.prepare.outputs.v-version }}
+          name: Release ${{ needs.prepare.outputs.v-version }}
           generate_release_notes: true
           prerelease: false
           files: |
