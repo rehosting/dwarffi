@@ -56,7 +56,7 @@ jobs:
             ext: ""
           - goos: darwin
             goarch: amd64
-            plat_tag: macosx_10_15_x86_64
+            plat_tag: macosx_10_9_x86_64
             ext: ""
           - goos: darwin
             goarch: arm64
