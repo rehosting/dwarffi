@@ -222,6 +222,15 @@ class VtypeBaseType(msgspec.Struct):
 
     def __repr__(self) -> str:
         return f"<VtypeBaseType Name='{self.name}' Kind='{self.kind}' Size={self.size} Signed={self.signed}>"
+    
+    @property
+    def ptr(self) -> Dict[str, Any]:
+        """Syntactic sugar to get a pointer to this type."""
+        return {"kind": "pointer", "subtype": {"kind": "base", "name": self.name}}
+
+    def array(self, count: int = 0) -> Dict[str, Any]:
+        """Syntactic sugar to get an array of this type."""
+        return {"kind": "array", "count": count, "subtype": {"kind": "base", "name": self.name}}
 
 
 class VtypeStructField(msgspec.Struct):
@@ -426,6 +435,16 @@ class VtypeUserType(msgspec.Struct):
     def __str__(self) -> str:
         return self.pretty_print()
 
+    @property
+    def ptr(self) -> Dict[str, Any]:
+        """Syntactic sugar to get a pointer to this type."""
+        # Structs and unions store their kind in self.kind
+        return {"kind": "pointer", "subtype": {"kind": self.kind, "name": self.name}}
+
+    def array(self, count: int = 0) -> Dict[str, Any]:
+        """Syntactic sugar to get an array of this type."""
+        return {"kind": "array", "count": count, "subtype": {"kind": self.kind, "name": self.name}}
+
 
 class VtypeEnum(msgspec.Struct):
     """Represents a C enumeration and its constant mappings."""
@@ -503,6 +522,15 @@ class VtypeEnum(msgspec.Struct):
         
     def __str__(self) -> str:
         return self.pretty_print()
+
+    @property
+    def ptr(self) -> Dict[str, Any]:
+        """Syntactic sugar to get a pointer to this type."""
+        return {"kind": "pointer", "subtype": {"kind": "enum", "name": self.name}}
+
+    def array(self, count: int = 0) -> Dict[str, Any]:
+        """Syntactic sugar to get an array of this type."""
+        return {"kind": "array", "count": count, "subtype": {"kind": "enum", "name": self.name}}
 
 class VtypeTypeRef:
     """A friendly wrapper around ISF type reference dictionaries."""
