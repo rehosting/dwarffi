@@ -27,6 +27,27 @@ from .utils import get_dwarf2json_path
 UNBOUNDED_ARRAY_MAX_BYTES = 64 * 1024   # 64 KiB default (tunable)
 UNBOUNDED_ARRAY_MIN_ELEMS = 1           # at least 1 element
 
+class _TypeNamespace:
+    def __init__(self, dffi: "DFFI") -> None:
+        self._dffi = dffi
+
+    def __getattr__(self, name: str) -> Any:
+        t = self._dffi.get_type(name)
+        if not t:
+            raise AttributeError(f"Type '{name}' not found.")
+        return t
+
+
+class _SymbolNamespace:
+    def __init__(self, dffi: "DFFI") -> None:
+        self._dffi = dffi
+
+    def __getattr__(self, name: str) -> Any:
+        sym = self._dffi.get_symbol(name)
+        if not sym:
+            raise AttributeError(f"Symbol '{name}' not found.")
+        return sym
+
 
 class DFFI:
     """
@@ -51,6 +72,10 @@ class DFFI:
         self._file_order: List[str] = []
         self.vtypejsons: Dict[str, VtypeJson] = {}
         self._warned_missing_functions = False
+        self.sym = _SymbolNamespace(self)
+        self.s = self.sym  # Alias for convenience
+        self.type = _TypeNamespace(self)
+        self.t = self.type  # Alias for convenience
 
         # Configure the backend natively
         self.backend: Optional[MemoryBackend] = None
