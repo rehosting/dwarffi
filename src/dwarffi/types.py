@@ -163,7 +163,15 @@ class VtypeBaseType(msgspec.Struct):
                 # Use kwargs directly as the initialization dict for structs
                 init = kwargs
 
-        return self._dffi.new(self, init)
+        instance = self._dffi.new(self, init)
+        
+        # Unbox Base Types and Enums
+        # Use getattr(self, 'kind', None) because msgspec objects don't have .get()
+        kind = getattr(self, "kind", None)
+        if isinstance(self, (VtypeBaseType, VtypeEnum)) or kind in ("base", "enum"):
+            return instance[0] 
+            
+        return instance
 
     def get_compiled_struct(self) -> Optional[StructLike]:
         """
@@ -224,13 +232,13 @@ class VtypeBaseType(msgspec.Struct):
         return f"<VtypeBaseType Name='{self.name}' Kind='{self.kind}' Size={self.size} Signed={self.signed}>"
     
     @property
-    def ptr(self) -> Dict[str, Any]:
+    def ptr(self) -> "VtypeDerived":
         """Syntactic sugar to get a pointer to this type."""
-        return {"kind": "pointer", "subtype": {"kind": "base", "name": self.name}}
+        return VtypeDerived({"kind": "pointer", "subtype": {"kind": "base", "name": self.name}}, getattr(self, "_dffi", None))
 
-    def array(self, count: int = 0) -> Dict[str, Any]:
+    def array(self, count: int = 0) -> "VtypeDerived":
         """Syntactic sugar to get an array of this type."""
-        return {"kind": "array", "count": count, "subtype": {"kind": "base", "name": self.name}}
+        return VtypeDerived({"kind": "array", "count": count, "subtype": {"kind": "base", "name": self.name}}, getattr(self, "_dffi", None))
 
 
 class VtypeStructField(msgspec.Struct):
@@ -295,7 +303,15 @@ class VtypeUserType(msgspec.Struct):
                 # Use kwargs directly as the initialization dict for structs
                 init = kwargs
 
-        return self._dffi.new(self, init)
+        instance = self._dffi.new(self, init)
+        
+        # Unbox Base Types and Enums
+        # Use getattr(self, 'kind', None) because msgspec objects don't have .get()
+        kind = getattr(self, "kind", None)
+        if isinstance(self, (VtypeBaseType, VtypeEnum)) or kind in ("base", "enum"):
+            return instance[0] 
+            
+        return instance
 
     def __post_init__(self) -> None:
         if self.fields:
@@ -436,14 +452,13 @@ class VtypeUserType(msgspec.Struct):
         return self.pretty_print()
 
     @property
-    def ptr(self) -> Dict[str, Any]:
+    def ptr(self) -> "VtypeDerived":
         """Syntactic sugar to get a pointer to this type."""
-        # Structs and unions store their kind in self.kind
-        return {"kind": "pointer", "subtype": {"kind": self.kind, "name": self.name}}
+        return VtypeDerived({"kind": "pointer", "subtype": {"kind": self.kind, "name": self.name}}, getattr(self, "_dffi", None))
 
-    def array(self, count: int = 0) -> Dict[str, Any]:
+    def array(self, count: int = 0) -> "VtypeDerived":
         """Syntactic sugar to get an array of this type."""
-        return {"kind": "array", "count": count, "subtype": {"kind": self.kind, "name": self.name}}
+        return VtypeDerived({"kind": "array", "count": count, "subtype": {"kind": self.kind, "name": self.name}}, getattr(self, "_dffi", None))
 
 
 class VtypeEnum(msgspec.Struct):
@@ -488,7 +503,15 @@ class VtypeEnum(msgspec.Struct):
                 # Use kwargs directly as the initialization dict for structs
                 init = kwargs
 
-        return self._dffi.new(self, init)
+        instance = self._dffi.new(self, init)
+        
+        # Unbox Base Types and Enums
+        # Use getattr(self, 'kind', None) because msgspec objects don't have .get()
+        kind = getattr(self, "kind", None)
+        if isinstance(self, (VtypeBaseType, VtypeEnum)) or kind in ("base", "enum"):
+            return instance[0] 
+            
+        return instance
 
     def get_name_for_value(self, value: int) -> Optional[str]:
         """Performs a reverse lookup to find a constant name for an integer value."""
@@ -524,13 +547,13 @@ class VtypeEnum(msgspec.Struct):
         return self.pretty_print()
 
     @property
-    def ptr(self) -> Dict[str, Any]:
+    def ptr(self) -> "VtypeDerived":
         """Syntactic sugar to get a pointer to this type."""
-        return {"kind": "pointer", "subtype": {"kind": "enum", "name": self.name}}
+        return VtypeDerived({"kind": "pointer", "subtype": {"kind": "enum", "name": self.name}}, getattr(self, "_dffi", None))
 
-    def array(self, count: int = 0) -> Dict[str, Any]:
+    def array(self, count: int = 0) -> "VtypeDerived":
         """Syntactic sugar to get an array of this type."""
-        return {"kind": "array", "count": count, "subtype": {"kind": "enum", "name": self.name}}
+        return VtypeDerived({"kind": "array", "count": count, "subtype": {"kind": "enum", "name": self.name}}, getattr(self, "_dffi", None))
 
 class VtypeTypeRef:
     """A friendly wrapper around ISF type reference dictionaries."""
@@ -715,6 +738,65 @@ class VtypeSymbol(msgspec.Struct):
 
     def __str__(self) -> str:
         return self.pretty_print()
+
+
+class VtypeDerived(Dict[str, Any]):
+    """
+    A dictionary subclass representing dynamically derived types (arrays, pointers).
+    Inherits from dict to maintain compatibility with raw ISF dictionaries, while
+    adding syntactic sugar for direct instantiation and further chaining.
+    """
+    def __init__(self, type_dict: Dict[str, Any], dffi: Any = None):
+        super().__init__(type_dict)
+        self._dffi = dffi
+
+    def bind(self, dffi: Any) -> "VtypeDerived":
+        self._dffi = dffi
+        return self
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        if not getattr(self, "_dffi", None):
+            raise RuntimeError("Derived type is not bound to a DFFI engine.")
+        
+        init = None
+        if args:
+            if len(args) == 1 and not kwargs:
+                init = args[0]
+            else:
+                init = list(args)
+        
+        if kwargs:
+            if init is not None:
+                if isinstance(init, dict):
+                    init = {**init, **kwargs}
+                else:
+                    raise ValueError("Cannot mix positional arguments and keyword arguments for initialization.")
+            else:
+                init = kwargs
+
+        # Dynamic routing based on the kind of derived type
+        if self.get("kind") == "pointer":
+            if init is None:
+                init = 0 # Default to NULL pointer
+            return self._dffi.cast(self, init)
+        
+        instance = self._dffi.new(self, init)
+        
+        # Derived types (like arrays/pointers) should only unbox if 
+        # they resolved to a base or enum kind.
+        if self.get("kind") in ("base", "enum"):
+            return instance[0]
+            
+        return instance
+
+    @property
+    def ptr(self) -> "VtypeDerived":
+        """Chainable pointer generator (e.g., int.array(5).ptr)."""
+        return VtypeDerived({"kind": "pointer", "subtype": dict(self)}, getattr(self, "_dffi", None))
+
+    def array(self, count: int = 0) -> "VtypeDerived":
+        """Chainable array generator (e.g., int.ptr.array(10))."""
+        return VtypeDerived({"kind": "array", "count": count, "subtype": dict(self)}, getattr(self, "_dffi", None))
 
 
 class ISFData(msgspec.Struct):
