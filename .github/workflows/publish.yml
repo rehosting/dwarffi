@@ -200,6 +200,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
+          verbose: true
 
       - name: Create release
         uses: softprops/action-gh-release@v2
