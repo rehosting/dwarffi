@@ -1,3 +1,4 @@
+
 # hatch_build.py
 import os
 
@@ -10,6 +11,10 @@ class CustomBuildHook(BuildHookInterface):
         plat_tag = os.environ.get("DWARFFI_PLATFORM_TAG")
         
         if plat_tag:
-            # If set, force the wheel to be platform-specific instead of 'any'
+            # We must explicitly override all three parts of the tag (python, abi, platform)
+            # Otherwise, setting pure_python=False forces the current CPython ABI tag.
             build_data["pure_python"] = False
+            build_data["infer_tag"] = False
+            
+            # This explicitly formats the filename and internal metadata to: py3-none-<platform>
             build_data["tag"] = f"py3-none-{plat_tag}"
