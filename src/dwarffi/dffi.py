@@ -169,21 +169,21 @@ class DFFI:
         """Finds a base type (e.g., 'int', 'char') across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_base_type(name):
-                return res
+                return res.bind(self)
         return None
 
     def get_user_type(self, name: str) -> Optional[VtypeUserType]:
         """Finds a user-defined struct or union across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_user_type(name):
-                return res
+                return res.bind(self)
         return None
 
     def get_enum(self, name: str) -> Optional[VtypeEnum]:
         """Finds an enumeration across all loaded ISFs."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_enum(name):
-                return res
+                return res.bind(self)
         return None
 
     def get_symbol(
@@ -281,6 +281,8 @@ class DFFI:
         """General lookup for any type by name."""
         for f in self._file_order:
             if res := self.vtypejsons[f].get_type(name):
+                if hasattr(res, "bind"):
+                    return res.bind(self)
                 return res
         return None
 
