@@ -46,14 +46,9 @@ def ffi():
 
 
 def test_basetype_call(ffi: DFFI):
-    """Test instantiating a primitive base type using __call__."""
     t_int = ffi.get_type("int")
-    assert t_int is not None
-
-    # Call with a single argument
     val = t_int(42)
-    assert val[0] == 42
-    assert ffi.sizeof(val) == 4
+    assert val == 42
 
 
 def test_struct_call_dict(ffi: DFFI):
@@ -100,14 +95,14 @@ def test_struct_call_mixed_args_error(ffi: DFFI):
 
 
 def test_enum_call(ffi: DFFI):
-    """Test instantiating an enum and verifying its string representation."""
     t_status = ffi.get_type("Status")
     assert t_status is not None
 
+    # status_val is an EnumInstance because of the unboxing in __call__
     status_val = t_status(1)
-    assert status_val[0] == 1
-    # Test that the enum resolves its name properly
-    assert ffi.string(status_val) == b"ERROR"
+    
+    assert int(status_val) == 1
+    assert status_val.name == "ERROR"  # Use the attribute directly!
 
 
 def test_unbound_type_error():
