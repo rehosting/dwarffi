@@ -146,6 +146,8 @@ jobs:
     env:
       SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DWARFFI: ${{ needs.prepare.outputs.version }}
       SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.prepare.outputs.version }}
+      # Pass the matrix tag directly into our custom hatchling hook!
+      DWARFFI_PLATFORM_TAG: ${{ matrix.plat_tag }}
     strategy:
       matrix:
         plat_tag: 
@@ -165,7 +167,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install Build Tools
-        run: python -m pip install --upgrade pip build wheel
+        run: python -m pip install --upgrade pip build
 
       - name: Download Target Binary
         uses: actions/download-artifact@v4
@@ -173,12 +175,8 @@ jobs:
           name: binary-${{ matrix.plat_tag }}
           path: src/dwarffi/bin/
 
-      - name: Build Temporary Wheel
+      - name: Build Platform Wheel
         run: python -m build --wheel
-
-      - name: Retag Wheel for Platform
-        run: |
-          python -m wheel tags --platform-tag ${{ matrix.plat_tag }} --remove dist/*.whl
 
       - name: Upload Platform Wheel
         uses: actions/upload-artifact@v4
