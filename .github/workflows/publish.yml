@@ -154,7 +154,7 @@ jobs:
           - manylinux2014_x86_64
           - manylinux2014_aarch64
           # Update the macOS tags to these universally accepted formats:
-          - macosx_10_9_universal2   # Covers all x86 Macs
+          - macosx_10_9_x86_64   # Covers all x86 Macs
           - macosx_11_0_arm64        # Keep this for strict ARM, or change to macosx_11_0_universal2
           - win_amd64
 
