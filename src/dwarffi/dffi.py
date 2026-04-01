@@ -22,6 +22,7 @@ from .types import (
     VtypeSymbol,
     VtypeUserType,
 )
+from .utils import get_dwarf2json_path
 
 UNBOUNDED_ARRAY_MAX_BYTES = 64 * 1024   # 64 KiB default (tunable)
 UNBOUNDED_ARRAY_MIN_ELEMS = 1           # at least 1 element
@@ -1052,7 +1053,7 @@ class DFFI:
         source: str,
         compiler: str = "gcc",
         compiler_flags: Optional[List[str]] = None,
-        dwarf2json_cmd: str = "dwarf2json",
+        dwarf2json_cmd: Optional[str] = None,
         save_isf_to: Optional[str] = None,
     ) -> None:
         """
@@ -1066,7 +1067,8 @@ class DFFI:
             dwarf2json_cmd: Path to the dwarf2json executable.
             save_isf_to: Optional file path to cache the generated ISF.
         """
-        if not shutil.which(dwarf2json_cmd):
+        dwarf2json_cmd = dwarf2json_cmd or get_dwarf2json_path()
+        if dwarf2json_cmd is None:
             raise RuntimeError(
                 f"'{dwarf2json_cmd}' not found in PATH.\n"
                 "dwarffi requires dwarf2json to extract type info from compiled C code.\n"
