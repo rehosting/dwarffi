@@ -16,5 +16,7 @@ class CustomBuildHook(BuildHookInterface):
             build_data["pure_python"] = False
             build_data["infer_tag"] = False
             
-            # This explicitly formats the filename and internal metadata to: py3-none-<platform>
-            build_data["tag"] = f"py3-none-{plat_tag}"
+            # Use cp310-abi3 to satisfy PyPI's strict platform wheel requirements.
+            # This ensures pip prefers this wheel over the generic -any.whl, 
+            # while keeping it compatible with all Python 3.10+ versions.
+            build_data["tag"] = f"cp310-abi3-{plat_tag}"
