@@ -16,6 +16,7 @@ from .instances import BoundArrayView, BoundTypeInstance, Ptr
 from .parser import VtypeJson
 from .types import (
     VtypeBaseType,
+    VtypeDerived,
     VtypeEnum,
     VtypeFunction,
     VtypeStructField,
@@ -426,13 +427,13 @@ class DFFI:
             base = m.group(1).strip()
             count = int(m.group(2)) if m.group(2) else 0
             subtype_info = self._make_subtype_info(base)
-            return {"kind": "array", "count": count, "subtype": subtype_info}
+            return VtypeDerived({"kind": "array", "count": count, "subtype": subtype_info}, self)
 
         # Pointer parsing
         if ctype.endswith("*"):
             base_name = ctype[:-1].strip()
             subtype_info = self._make_subtype_info(base_name)
-            return {"kind": "pointer", "subtype": subtype_info}
+            return VtypeDerived({"kind": "pointer", "subtype": subtype_info}, self)
 
         # 3. Resolve Typedefs / Raw Types
         # Use the stripped 'lookup_name' for the ISF search
