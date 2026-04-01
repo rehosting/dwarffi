@@ -39,7 +39,12 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Install (dev)
+      - name: Ensure bin directory exists for hatchling
+        run: |
+          mkdir -p src/dwarffi/bin
+          touch src/dwarffi/bin/.keep
+
+      - name: Run python -m pip install --upgrade pip
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
