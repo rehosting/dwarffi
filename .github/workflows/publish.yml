@@ -91,7 +91,14 @@ jobs:
           CGO_ENABLED: 0
         run: |
           go build -trimpath -ldflags="-s -w" -o dwarf2json${{ matrix.ext }} main.go
-          upx --best --lzma dwarf2json${{ matrix.ext }}
+          
+          # UPX does not support modern macOS (Mach-O) binaries. 
+          # We only compress Linux and Windows targets.
+          if [ "${{ matrix.goos }}" != "darwin" ]; then
+            upx --best --lzma dwarf2json${{ matrix.ext }}
+          else
+            echo "Skipping UPX compression for macOS."
+          fi
 
       - name: Upload Binary
         uses: actions/upload-artifact@v4
