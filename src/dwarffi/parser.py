@@ -210,10 +210,21 @@ class VtypeJson:
             return user_def.size if user_def else None
         if kind == "enum":
             enum_def = self.get_enum(name) if name else None
-            if not enum_def or not enum_def.base:
+            if not enum_def:
                 return None
-            base_type_for_enum = self.get_base_type(enum_def.base)
-            return base_type_for_enum.size if base_type_for_enum else None
+                
+            # If the enum has an explicit base type defined in the ISF, use its size
+            if enum_def.base:
+                base_type_for_enum = self.get_base_type(enum_def.base)
+                if base_type_for_enum and base_type_for_enum.size is not None:
+                    return base_type_for_enum.size
+                    
+            # Fallback: Check if the enum itself defines a size directly
+            if getattr(enum_def, "size", None) is not None:
+                return enum_def.size
+                
+            # Standard C fallback: Enums are usually the size of an int (4 bytes)
+            return 4
         if kind == "array":
             count, subtype_info = type_info.get("count"), type_info.get("subtype")
             if count is None or subtype_info is None:
