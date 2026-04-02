@@ -33,9 +33,27 @@ class _TypeNamespace:
         self._dffi = dffi
 
     def __getattr__(self, name: str) -> Any:
-        t = self._dffi.get_type(name)
+        try:
+            # Upgrade from get_type() to typeof() to natively resolve typedefs
+            t = self._dffi.typeof(name)
+        except Exception as e:
+            raise AttributeError(f"Error resolving type '{name}': {e}") from e
+            
         if not t:
             raise AttributeError(f"Type '{name}' not found.")
+            
+        # If the typedef resolves to a pointer or array, it returns a dictionary.
+        # We wrap it in a factory so it can be called like `d.t.int_ptr(0x4000)`
+        if isinstance(t, dict):
+            def _factory(init=None, **kwargs):
+                val = init if init is not None else (kwargs if kwargs else None)
+                # Mimic CFFI: Calling a pointer type with an integer casts the address
+                if t.get("kind") == "pointer" and isinstance(val, int):
+                    return self._dffi.cast(t, val)
+                # Otherwise, allocate new memory for the array/pointer
+                return self._dffi.new(t, val)
+            return _factory
+            
         return t
 
 
