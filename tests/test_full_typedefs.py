@@ -288,3 +288,246 @@ def test_function_pointer_typedef():
     ctx = d.new("struct math_context")
     ctx.op = 0x400500 # Assign an arbitrary memory address representing a function
     assert ctx.op == 0x400500
+
+def test_typedef_unions():
+    """Tests typedefs that alias unions."""
+    d = DFFI()
+    d.cdef("""
+        typedef union {
+            unsigned int raw;
+            unsigned char bytes[4];
+        } color_t;
+        
+        void __attribute__((used)) _force_keep(color_t c) {}
+    """)
+    
+    # 1. Type resolution
+    t = d.get_type("color_t")
+    assert isinstance(t, VtypeUserType)
+    assert t.kind == "union"
+    
+    # 2. Assignment and overlapping memory verification
+    color = d.new("color_t")
+    color.raw = 0xFF00AA55
+    
+    # Depending on endianness, the bytes will overlap. 
+    # Assuming Little Endian (standard x86/ARM):
+    assert color.bytes[0] == 0x55
+    assert color.bytes[1] == 0xAA
+    assert color.bytes[2] == 0x00
+    assert color.bytes[3] == 0xFF
+    assert d.sizeof("color_t") == 4
+
+def test_opaque_handle_typedefs():
+    """Tests 'opaque pointers' (pointers to incomplete structs) commonly used for handles."""
+    d = DFFI()
+    d.cdef("""
+        // The struct is never fully defined in this compilation unit
+        struct _internal_state; 
+        
+        // But we typedef a pointer to it (like HWND or FILE*)
+        typedef struct _internal_state* HANDLE;
+        
+        void __attribute__((used)) _force_keep(HANDLE h) {}
+    """)
+    
+    t = d.typeof("HANDLE")
+    assert isinstance(t, dict)
+    assert t["kind"] == "pointer"
+    
+    # It should point to a struct named '_internal_state' even if the size is unknown
+    assert t["subtype"]["name"] == "_internal_state"
+    assert t["subtype"]["kind"] == "struct"
+    
+    # We should still be able to cast and pass around the handles as raw integers
+    handle = d.cast("HANDLE", 0x8BADF00D)
+    assert handle.address == 0x8BADF00D
+
+def test_multidimensional_array_typedef_chains():
+    """Tests typedefs that build multi-dimensional arrays out of 1D array typedefs."""
+    d = DFFI()
+    d.cdef("""
+        typedef float vec3_t[3];
+        typedef vec3_t transform_matrix_t[4]; // Array of arrays
+        
+        void __attribute__((used)) _force_keep(transform_matrix_t t) {}
+    """)
+    
+    t = d.typeof("transform_matrix_t")
+    assert isinstance(t, dict)
+    assert t["kind"] == "array"
+    assert t["count"] == 4
+    
+    # The subtype should resolve to the inner typedef or decay to its array equivalent
+    subtype = d._resolve_type_info(t["subtype"])
+    assert subtype["kind"] == "array"
+    assert subtype["count"] == 3
+    
+    # Matrix size = 4 rows * 3 cols * 4 bytes = 48 bytes
+    assert d.sizeof("transform_matrix_t") == 48
+    
+    # Test instantiation and 2D access
+    matrix = d.new("transform_matrix_t")
+    matrix[1][2] = 3.14
+    
+    assert matrix[1][2] == 3.14
+
+def test_multidimensional_array_typedef_chains():
+    """Tests typedefs that build multi-dimensional arrays out of 1D array typedefs."""
+    d = DFFI()
+    d.cdef("""
+        typedef float vec3_t[3];
+        typedef vec3_t transform_matrix_t[4]; // Array of arrays
+        
+        void __attribute__((used)) _force_keep(transform_matrix_t t) {}
+    """)
+    
+    t = d.typeof("transform_matrix_t")
+    assert isinstance(t, dict)
+    assert t["kind"] == "array"
+    assert t["count"] == 4
+    
+    # The subtype should resolve to the inner typedef or decay to its array equivalent
+    subtype = d._resolve_type_info(t["subtype"])
+    assert subtype["kind"] == "array"
+    assert subtype["count"] == 3
+    
+    # Matrix size = 4 rows * 3 cols * 4 bytes = 48 bytes
+    assert d.sizeof("transform_matrix_t") == 48
+    
+    # Test instantiation and 2D access
+    matrix = d.new("transform_matrix_t")
+    
+    # Use 3.5 instead of 3.14 to avoid 32-bit float precision loss during assertion
+    matrix[1][2] = 3.5 
+    
+    assert matrix[1][2] == 3.5
+
+def test_self_referential_typedef_structs():
+    """Tests typedefs of structs that contain pointers to their own type (e.g., Tree Nodes)."""
+    d = DFFI()
+    d.cdef("""
+        typedef struct _tree_node {
+            int id;
+            struct _tree_node* left;
+            struct _tree_node* right;
+        } tree_node_t;
+        
+        typedef tree_node_t* tree_ptr_t;
+        
+        void __attribute__((used)) _force_keep(tree_ptr_t t) {}
+    """)
+    
+    t = d.get_type("tree_node_t")
+    assert isinstance(t, VtypeUserType)
+    
+    # Allocate a root and two children
+    root = d.new("tree_node_t")
+    child_l = d.new("tree_node_t")
+    child_r = d.new("tree_node_t")
+    
+    root.id = 100
+    child_l.id = 50
+    child_r.id = 150
+    
+    # Link them using addressof (creates Ptr objects)
+    root.left = d.addressof(child_l)
+    root.right = d.addressof(child_r)
+    
+    # Verify the pointers hold the correct absolute addresses
+    assert root.left.address == d.addressof(child_l).address
+    assert root.right.address == d.addressof(child_r).address
+    
+    # Verify the pointer's inner type correctly resolves to the self-referential struct
+    assert root.left.points_to_type_info["name"] == "_tree_node"
+    assert root.right.points_to_type_info["name"] == "_tree_node"
+
+def test_hardware_register_bitfields_with_typedefs():
+    """Tests deeply nested anonymous structs, unions, and bitfields built entirely out of typedefs."""
+    d = DFFI()
+    d.cdef("""
+        typedef unsigned char u8;
+        typedef unsigned short u16;
+        typedef unsigned int u32;
+
+        typedef union {
+            u32 raw;
+            struct {
+                u8 is_enabled : 1;
+                u8 has_error  : 1;
+                u8 reserved   : 6;
+                u8 data_code;
+                u16 memory_page;
+            } fields;
+        } hw_register_t;
+        
+        void __attribute__((used)) _force_keep(hw_register_t r) {}
+    """)
+    
+    reg = d.new("hw_register_t")
+    
+    # Size should be exactly 4 bytes (32 bits)
+    assert d.sizeof("hw_register_t") == 4
+    
+    # Write to the bitfields natively
+    reg.fields.is_enabled = 1
+    reg.fields.has_error = 0
+    reg.fields.data_code = 0xAA
+    reg.fields.memory_page = 0xBEEF
+    
+    # The raw union overlap should perfectly reflect the packed memory!
+    # Bit layout (Little Endian):
+    # Byte 0: [ reserved:6 | has_error:1 | is_enabled:1 ] -> 00000001 = 0x01
+    # Byte 1: data_code = 0xAA
+    # Byte 2-3: memory_page = 0xBEEF
+    # Total expected raw u32: 0xBEEFAA01
+    
+    assert reg.raw == 0xBEEFAA01
+    
+    # Reverse test: write to raw, read from bitfields
+    reg.raw = 0x12345603 # 0x03 -> is_enabled=1, has_error=1
+    assert reg.fields.is_enabled == 1
+    assert reg.fields.has_error == 1
+    assert reg.fields.data_code == 0x56
+    assert reg.fields.memory_page == 0x1234
+
+def test_vtable_simulation_typedefs():
+    """Tests structs containing arrays of function pointers (vtables) via typedefs."""
+    d = DFFI()
+    d.cdef("""
+        // Typedef for a function pointer that takes an int and returns void
+        typedef void (*action_func_t)(int);
+        
+        // Typedef for a struct containing an array of those function pointers
+        typedef struct {
+            int state;
+            action_func_t vtable[4];
+        } object_class_t;
+        
+        void __attribute__((used)) _force_keep(object_class_t o) {}
+    """)
+    
+    obj = d.new("object_class_t")
+    
+    # Set the state
+    obj.state = 404
+    
+    # Assign some fake memory addresses representing loaded functions to the vtable
+    obj.vtable[0] = 0x08048000
+    obj.vtable[3] = 0x080480F0
+    
+    # Read them back out
+    assert obj.state == 404
+    assert obj.vtable[0] == 0x08048000
+    assert obj.vtable[1] == 0  # Uninitialized should be 0
+    assert obj.vtable[3] == 0x080480F0
+    
+    # Verify exact size (4 bytes for int + 4 * pointer_size)
+    ptr_size = d.sizeof("pointer")
+    expected_size = 4 + (4 * ptr_size)
+    
+    # Account for C-struct padding: if pointers are 8 bytes, the 'int' will have 4 bytes of padding after it
+    if ptr_size == 8:
+        expected_size += 4 
+        
+    assert d.sizeof("object_class_t") == expected_size
