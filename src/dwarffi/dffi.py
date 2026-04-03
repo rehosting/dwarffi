@@ -1,5 +1,4 @@
 import fnmatch
-import sys
 import json
 import lzma
 import os
@@ -7,6 +6,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 from functools import lru_cache
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, cast
