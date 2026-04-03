@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def main():
     # 1. Load a pre-compiled ISF file (e.g., generated via your CI pipeline)
     # d = DFFI("vmlinux.json.xz")

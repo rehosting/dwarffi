@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def test_bitfields():
     d = DFFI()
     # Define a classic TCP-style header or hardware register

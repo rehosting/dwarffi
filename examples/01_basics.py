@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def main():
     # 1. Initialize the engine
     d = DFFI()

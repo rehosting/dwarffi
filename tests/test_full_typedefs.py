@@ -1,6 +1,6 @@
-import pytest
 from dwarffi.dffi import DFFI
-from dwarffi.types import VtypeBaseType, VtypeUserType, VtypeEnum
+from dwarffi.types import VtypeBaseType, VtypeEnum, VtypeUserType
+
 
 def test_exhaustive_typedef_coverage():
     d = DFFI()

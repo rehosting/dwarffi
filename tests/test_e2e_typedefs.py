@@ -1,6 +1,6 @@
-import pytest
 from dwarffi.dffi import DFFI
-from dwarffi.instances import BoundTypeInstance, Ptr, BoundArrayView
+from dwarffi.instances import BoundArrayView, BoundTypeInstance, Ptr
+
 
 def test_e2e_new_dwarf2json_typedefs():
     """

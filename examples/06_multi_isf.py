@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def test_multi_isf():
     kernel_isf = {
         "metadata": {"format": "1.4.0"},

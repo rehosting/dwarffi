@@ -1,5 +1,6 @@
-from dwarffi.dffi import DFFI
 from dwarffi.backend import MemoryBackend
+from dwarffi.dffi import DFFI
+
 
 # A simple mock backend that simulates reading/writing to a target's memory
 class MockDebuggerBackend(MemoryBackend):
