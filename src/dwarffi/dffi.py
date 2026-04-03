@@ -105,6 +105,7 @@ class DFFI:
         
         # Safely bound LRU cache tied to the instance lifecycle to prevent memory leaks
         self._parse_ctype_string: Callable[[str], Union[Vtype, Dict[str, Any], None]] = lru_cache(maxsize=2048)(self._parse_ctype_string_impl)
+        self._get_type: Callable[[str], Optional[Vtype]] = lru_cache(maxsize=2048)(self._get_type_impl)
 
         if isf_input is not None:
             if isinstance(isf_input, list):
@@ -119,6 +120,7 @@ class DFFI:
         self.vtypejsons[source] = vtype_obj
          # Clear the cache to ensure new types are recognized
         self._parse_ctype_string.cache_clear() # type: ignore[attr-defined]
+        self._get_type.cache_clear() # type: ignore[attr-defined]
 
     def load_isf(self, isf_input: Union[str, Dict[str, Any]]) -> None:
         """
@@ -321,14 +323,26 @@ class DFFI:
                 return res.bind(self)
         return None
 
-    def get_type(self, name: str) -> Optional[Vtype]:
+    def _get_type_impl(self, name: str) -> Optional[Union[Vtype, Dict[str, Any]]]:
         """General lookup for any type by name."""
+        # Resolve typedefs across all loaded ISFs first
+        resolved_info = self._resolve_type_info({"kind": "typedef", "name": name})
+        
+        search_name = name
+        # If it resolved to a concrete type (not a pointer/array which are dicts), 
+        # use the underlying concrete type's name for the lookup.
+        if resolved_info and resolved_info.get("kind") not in ("typedef", "pointer", "array"):
+            search_name = resolved_info.get("name", name)
+
         for f in self._file_order:
-            if res := self.vtypejsons[f].get_type(name):
+            if res := self.vtypejsons[f].get_type(search_name):
                 if hasattr(res, "bind"):
                     return res.bind(self)
                 return res
         return None
+
+    def get_type(self, name: str) -> Optional[Vtype]:
+        return self._get_type(name)
 
     def get_symbols_by_address(self, target_address: int) -> List[Any]:
         """Finds all symbols located at a specific memory address."""
