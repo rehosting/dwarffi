@@ -1,4 +1,5 @@
 import fnmatch
+import sys
 import json
 import lzma
 import os
@@ -1159,17 +1160,22 @@ class DFFI:
                     f"Compilation failed:\nCommand: {' '.join(cmd_compile)}\nStderr: {e.stderr}"
                 ) from e
 
-            # 2) Run dwarf2json (types first; fallback to --elf if needed)
-            cmd_d2j = [dwarf2json_cmd, "linux", "--elf-types", o_file]
+            # 2) Run dwarf2json (types first; fallback to full object if needed)
+            if sys.platform == "darwin":
+                cmd_d2j = [dwarf2json_cmd, "mac", "--macho-types", o_file]
+                cmd_fallback = [dwarf2json_cmd, "mac", "--macho", o_file]
+            else:
+                cmd_d2j = [dwarf2json_cmd, "linux", "--elf-types", o_file]
+                cmd_fallback = [dwarf2json_cmd, "linux", "--elf", o_file]
+
             try:
                 res = subprocess.run(cmd_d2j, check=True, capture_output=True, text=True)
             except subprocess.CalledProcessError:
-                cmd_d2j = [dwarf2json_cmd, "linux", "--elf", o_file]
                 try:
-                    res = subprocess.run(cmd_d2j, check=True, capture_output=True, text=True)
+                    res = subprocess.run(cmd_fallback, check=True, capture_output=True, text=True)
                 except subprocess.CalledProcessError as e:
                     raise RuntimeError(
-                        f"dwarf2json failed:\nCommand: {' '.join(cmd_d2j)}\nStderr: {e.stderr}"
+                        f"dwarf2json failed:\nCommand: {' '.join(cmd_fallback)}\nStderr: {e.stderr}"
                     ) from e
 
             # 3) Parse
