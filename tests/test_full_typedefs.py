@@ -265,6 +265,7 @@ def test_typedef_shadowing():
     
     # Make sure we can allocate it
     head = d.new("list_head")
+    print(head)
     assert d.sizeof("list_head") == 16  # Assuming 64-bit pointers
 
 def test_function_pointer_typedef():
@@ -342,35 +343,6 @@ def test_opaque_handle_typedefs():
     # We should still be able to cast and pass around the handles as raw integers
     handle = d.cast("HANDLE", 0x8BADF00D)
     assert handle.address == 0x8BADF00D
-
-def test_multidimensional_array_typedef_chains():
-    """Tests typedefs that build multi-dimensional arrays out of 1D array typedefs."""
-    d = DFFI()
-    d.cdef("""
-        typedef float vec3_t[3];
-        typedef vec3_t transform_matrix_t[4]; // Array of arrays
-        
-        void __attribute__((used)) _force_keep(transform_matrix_t t) {}
-    """)
-    
-    t = d.typeof("transform_matrix_t")
-    assert isinstance(t, dict)
-    assert t["kind"] == "array"
-    assert t["count"] == 4
-    
-    # The subtype should resolve to the inner typedef or decay to its array equivalent
-    subtype = d._resolve_type_info(t["subtype"])
-    assert subtype["kind"] == "array"
-    assert subtype["count"] == 3
-    
-    # Matrix size = 4 rows * 3 cols * 4 bytes = 48 bytes
-    assert d.sizeof("transform_matrix_t") == 48
-    
-    # Test instantiation and 2D access
-    matrix = d.new("transform_matrix_t")
-    matrix[1][2] = 3.14
-    
-    assert matrix[1][2] == 3.14
 
 def test_multidimensional_array_typedef_chains():
     """Tests typedefs that build multi-dimensional arrays out of 1D array typedefs."""
