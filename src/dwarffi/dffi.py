@@ -45,7 +45,7 @@ class _TypeNamespace:
         # If the typedef resolves to a pointer or array, it returns a dictionary.
         # We wrap it in a factory so it can be called like `d.t.int_ptr(0x4000)`
         if isinstance(t, dict):
-            def _factory(init=None, **kwargs):
+            def _factory(init: Any = None, **kwargs: Any) -> Any:
                 val = init if init is not None else (kwargs if kwargs else None)
                 # Mimic CFFI: Calling a pointer type with an integer casts the address
                 if t.get("kind") == "pointer" and isinstance(val, int):
@@ -323,7 +323,7 @@ class DFFI:
                 return res.bind(self)
         return None
 
-    def _get_type_impl(self, name: str) -> Optional[Union[Vtype, Dict[str, Any]]]:
+    def _get_type_impl(self, name: str) -> Optional[Vtype]:
         """General lookup for any type by name."""
         # Resolve typedefs across all loaded ISFs first
         resolved_info = self._resolve_type_info({"kind": "typedef", "name": name})
@@ -766,7 +766,7 @@ class DFFI:
 
         return instance
 
-    def cast(self, ctype: Union[str, Vtype], value: Any) -> BoundType:
+    def cast(self, ctype: Union[str, Vtype, Dict[str, Any]], value: Any) -> BoundType:
         """
         Interprets an integer address or existing CData as a new type.
 
@@ -873,7 +873,7 @@ class DFFI:
 
     def from_buffer(
         self,
-        ctype: Union[str, Vtype],
+        ctype: Union[str, Vtype, Dict[str, Any]],
         python_buffer: Any,
         offset: int = 0,
         require_writable: bool = False,
