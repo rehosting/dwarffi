@@ -26,6 +26,7 @@ def main():
     # We can use nested keyword arguments to cleanly initialize structs
     p1 = d.t.Point(x=10, y=20)
     p2 = d.t.Point(x=100, y=200)
+    print(p2)
     
     player = d.t.Player(
         health=100,
