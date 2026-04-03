@@ -175,6 +175,8 @@ jobs:
         with:
           name: binary-${{ matrix.plat_tag }}
           path: src/dwarffi/bin/
+      - name: Make binary executable
+        run: chmod +x src/dwarffi/bin/*
 
       - name: Build Platform Wheel
         run: python -m build --wheel
