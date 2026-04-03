@@ -11,8 +11,12 @@ def get_dwarf2json_path() -> Optional[str]:
         with importlib.resources.path("dwarffi.bin", "dwarf2json") as p:
             if os.path.exists(p):
                 # Ensure the executable bit survived the PyPI unpacking
-                st = os.stat(p)
-                os.chmod(p, st.st_mode | stat.S_IEXEC)
+                try:
+                    st = os.stat(p)
+                    os.chmod(p, st.st_mode | stat.S_IEXEC)
+                except (PermissionError, OSError):
+                    # Ignore if we don't have permission to chmod (e.g., system-wide install)
+                    pass
                 return str(p)
                 
         # Also check for Windows .exe extension
