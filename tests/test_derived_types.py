@@ -1,4 +1,5 @@
 import pytest
+
 from dwarffi.dffi import DFFI
 from dwarffi.types import VtypeDerived
 

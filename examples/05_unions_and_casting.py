@@ -1,5 +1,6 @@
 from dwarffi.dffi import DFFI
 
+
 def test_unions_and_casting():
     d = DFFI()
     d.cdef("""

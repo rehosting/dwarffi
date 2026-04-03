@@ -1,6 +1,7 @@
 import pytest
+
 from dwarffi.dffi import DFFI
-from dwarffi.instances import BoundTypeInstance, Ptr, BoundArrayView
+from dwarffi.instances import BoundArrayView, BoundTypeInstance, Ptr
 
 # ISF with a variety of types to test access logic
 TEST_ISF = {
