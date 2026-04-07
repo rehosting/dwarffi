@@ -1017,7 +1017,46 @@ class Ptr:
             return str(self._subtype_info.name)
 
         # If it's a raw ISF dictionary, use .get()
-        return str(self._subtype_info.get("name", "void"))
+        if isinstance(self._subtype_info, dict):
+            if self._subtype_info.get("kind") == "function":
+                return "function"
+            return str(self._subtype_info.get("name", "void"))
+
+        return "void"
+
+    @property
+    def signature(self) -> Optional["VtypeFunction"]: # type: ignore[name-defined]
+        """
+        Returns the function signature (as a VtypeFunction) if this pointer
+        points to a function, or None otherwise.
+        """
+        if isinstance(self._subtype_info, dict) and self._subtype_info.get("kind") == "function":
+            from .types import VtypeFunction, VtypeParameter
+
+            ret_info = self._subtype_info.get("return_type", {"kind": "void"})
+            params_info = self._subtype_info.get("parameters", [])
+
+            params = []
+            for p in params_info:
+                if isinstance(p, dict) and "type" in p:
+                    p_name = p.get("name", "")
+                    p_type = p["type"]
+                else:
+                    p_name = ""
+                    p_type = p
+
+                param = VtypeParameter(name=p_name, type_info=p_type, _dffi=self._vtype_accessor)
+                params.append(param)
+
+            func = VtypeFunction(
+                name=self._subtype_info.get("name", ""),
+                return_type_info=ret_info,
+                parameters=params,
+                _dffi=self._vtype_accessor
+            )
+            return func
+
+        return None
 
     def deref(self) -> Any:
         """
