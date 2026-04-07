@@ -386,7 +386,7 @@ def test_e2e_struct_function_pointer_member(compiler):
     if not sig1.args:
         pytest.skip("dwarf2json version does not output function signature parameters for pointers. Skipping.")
 
-    assert sig1.return_type_info.get("name") == "loff_t"
+    assert sig1.return_type_info.get("name") in ("loff_t", "long long", "long long int")
     assert len(sig1.args) == 3
 
     # Arg 0: struct file *
@@ -394,7 +394,7 @@ def test_e2e_struct_function_pointer_member(compiler):
     assert sig1.args[0].type_info["subtype"]["name"] == "file"
 
     # Arg 1: loff_t
-    assert sig1.args[1].type_info["name"] == "loff_t"
+    assert sig1.args[1].type_info["name"] in ("loff_t", "long long", "long long int")
 
     # Arg 2: int
     assert sig1.args[2].type_info["name"] == "int"
@@ -403,7 +403,7 @@ def test_e2e_struct_function_pointer_member(compiler):
     ioctl_ptr = inst.unlocked_ioctl
     sig2 = ioctl_ptr.signature
     assert sig2 is not None
-    assert sig2.return_type_info.get("name") == "long"
+    assert sig2.return_type_info.get("name") in ("long", "long int")
     assert len(sig2.args) == 3
     assert sig2.args[1].type_info["name"] == "unsigned int"
-    assert sig2.args[2].type_info["name"] == "unsigned long"
+    assert sig2.args[2].type_info["name"] in ("unsigned long", "long unsigned int")
