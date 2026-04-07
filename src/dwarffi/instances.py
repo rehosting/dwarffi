@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union, 
 
 from .backend import LiveMemoryProxy
 from .dtyping import FlatFieldsDict, MemoryBuffer, StructLike, TypeAccessor, TypeInfoDict, Vtype
-from .types import VtypeBaseType, VtypeEnum, VtypeUserType
+from .types import VtypeBaseType, VtypeEnum, VtypeFunction, VtypeParameter, VtypeUserType
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
@@ -1025,13 +1025,12 @@ class Ptr:
         return "void"
 
     @property
-    def signature(self) -> Optional["VtypeFunction"]: # type: ignore[name-defined]
+    def signature(self) -> Optional[VtypeFunction]:
         """
         Returns the function signature (as a VtypeFunction) if this pointer
         points to a function, or None otherwise.
         """
         if isinstance(self._subtype_info, dict) and self._subtype_info.get("kind") == "function":
-            from .types import VtypeFunction, VtypeParameter
 
             ret_info = self._subtype_info.get("return_type", {"kind": "void"})
             params_info = self._subtype_info.get("parameters", [])
