@@ -344,3 +344,62 @@ def test_e2e_deep_function_signature_resolution(compiler):
     # Validate the size calculation recursively handles the inner mac_addr_t arrays
     # 6 bytes (src) + 6 bytes (dst) + 2 bytes (short) = 14 bytes
     assert ffi.sizeof(pkt_struct) == 14
+
+@pytest.mark.parametrize("compiler", AVAILABLE_COMPILERS)
+def test_e2e_struct_function_pointer_member(compiler):
+    """
+    Tests dynamic extraction of function signatures from members of a struct
+    using a simulated file_operations jump table.
+    """
+    ffi = DFFI()
+    ffi.cdef(
+        """
+        typedef long long loff_t;
+        struct file {
+            loff_t f_pos;
+        };
+
+        struct file_operations {
+            loff_t (*llseek) (struct file *, loff_t, int);
+            long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
+        };
+
+        void __attribute__((used)) _force_keep(struct file_operations f) {}
+        """,
+        compiler=compiler
+    )
+
+    if not ffi.functions and not ffi.types.get("file_operations"):
+        pytest.skip("System dwarf2json does not support custom function signatures or type resolution failed. Skipping.")
+
+    inst = ffi.new("struct file_operations")
+
+    # 1. Inspect llseek signature
+    llseek_ptr = inst.llseek
+    assert llseek_ptr.points_to_type_name == "function"
+
+    sig1 = llseek_ptr.signature
+    if not sig1:
+        pytest.skip("dwarf2json version does not output function signatures for pointers. Skipping.")
+
+    assert sig1.return_type.name == "loff_t"
+    assert len(sig1.args) == 3
+
+    # Arg 0: struct file *
+    assert sig1.args[0].type["kind"] == "pointer"
+    assert sig1.args[0].type["subtype"]["name"] == "file"
+
+    # Arg 1: loff_t
+    assert sig1.args[1].type["name"] == "loff_t"
+
+    # Arg 2: int
+    assert sig1.args[2].type["name"] == "int"
+
+    # 2. Inspect unlocked_ioctl signature
+    ioctl_ptr = inst.unlocked_ioctl
+    sig2 = ioctl_ptr.signature
+    assert sig2 is not None
+    assert sig2.return_type.name == "long"
+    assert len(sig2.args) == 3
+    assert sig2.args[1].type["name"] == "unsigned int"
+    assert sig2.args[2].type["name"] == "unsigned long"
