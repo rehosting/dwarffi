@@ -4,7 +4,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union, 
 
 from .backend import LiveMemoryProxy
 from .dtyping import FlatFieldsDict, MemoryBuffer, StructLike, TypeAccessor, TypeInfoDict, Vtype
-from .types import VtypeBaseType, VtypeEnum, VtypeUserType, VtypeFunction, VtypeParameter
+from .types import VtypeBaseType, VtypeEnum, VtypeFunction, VtypeParameter, VtypeUserType
 
 
 def _wrap_integer(value: int, size_bytes: int, signed: bool) -> int:
