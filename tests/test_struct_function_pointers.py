@@ -1,7 +1,5 @@
 import pytest
-
 from dwarffi import DFFI
-
 
 @pytest.fixture
 def mock_isf_with_function_pointer():
