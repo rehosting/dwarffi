@@ -322,4 +322,4 @@ def test_e2e_function_returning_function_pointer(compiler):
     
     assert inst.get_handler.address == 0xCAFEBABE
     # The string representation should gracefully handle the nested type info
-    assert "void" in inst.get_handler.points_to_type_name
+    assert "function" in inst.get_handler.points_to_type_name
