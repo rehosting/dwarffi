@@ -1,6 +1,6 @@
 import pytest
 
-from dwarffi import DFFI, Ptr
+from dwarffi import DFFI
 
 
 @pytest.fixture
