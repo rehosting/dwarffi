@@ -1156,6 +1156,36 @@ class Ptr:
 
     def __ge__(self, other: Any) -> bool:
         return self.address >= (other.address if isinstance(other, Ptr) else other)
+    
+    def __and__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return self.address & other
+
+    def __rand__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return other & self.address
+
+    def __or__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return self.address | other
+
+    def __ror__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return other | self.address
+
+    def __xor__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return self.address ^ other
+
+    def __rxor__(self, other: int) -> int:
+        if not isinstance(other, int): 
+            return NotImplemented
+        return other ^ self.address
 
 
 class EnumInstance:
