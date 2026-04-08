@@ -1156,7 +1156,7 @@ class Ptr:
 
     def __ge__(self, other: Any) -> bool:
         return self.address >= (other.address if isinstance(other, Ptr) else other)
-    
+
     def __and__(self, other: int) -> int:
         if not isinstance(other, int): 
             return NotImplemented
