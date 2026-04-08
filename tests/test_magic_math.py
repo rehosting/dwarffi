@@ -1,6 +1,6 @@
 import pytest
 
-from dwarffi import DFFI
+from dwarffi import DFFI, Ptr
 
 
 @pytest.fixture
@@ -72,3 +72,33 @@ def test_primitive_math(ffi_env: DFFI):
     assert val > 50
     assert val <= 100
     assert val == 100
+
+def test_ptr_tagged_and_page_alignment(ffi_env: DFFI):
+    """
+    Simulate AArch64 tagged pointers and OS page alignment masking.
+    Verifies that complex bitwise logic chains evaluate correctly.
+    """
+    d = ffi_env
+    # 64-bit pointer with a metadata tag in the top 8 bits
+    # Tag: 0xA5, True Address: 0x00007FFF80001234
+    tagged_addr = 0xA5007FFF80001234
+    ptr = d.t.int.ptr(tagged_addr)
+
+    # 1. Extract the tag (shift right 56 bits)
+    tag = (ptr & 0xFF00000000000000) >> 56
+    assert tag == 0xA5
+
+    # 2. Clear the tag to get the routable address
+    actual_addr = ptr & 0x00FFFFFFFFFFFFFF
+    assert actual_addr == 0x00007FFF80001234
+
+    # 3. Calculate 4KB Page alignment (Clear the bottom 12 bits)
+    # Python bitwise NOT on standard ints can be tricky with signs, 
+    # so we explicitly mask the bits we want.
+    PAGE_MASK = 0xFFFFFFFFFFFFF000 
+    page_base = actual_addr & PAGE_MASK
+    assert page_base == 0x00007FFF80001000
+
+    # 4. Isolate the offset within the page
+    page_offset = actual_addr & 0xFFF
+    assert page_offset == 0x234
