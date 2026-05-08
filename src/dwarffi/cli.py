@@ -1,7 +1,8 @@
 # src/dwarffi/cli.py
-import sys
 import subprocess
+import sys
 from pathlib import Path
+
 
 def main() -> None:
     """Entry point for the dwarf2json command line wrapper."""
