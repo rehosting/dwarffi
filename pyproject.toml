@@ -86,3 +86,6 @@ warn_unused_ignores = true
 [[tool.mypy.overrides]]
 module = "dwarffi._version"
 ignore_missing_imports = true
+
+[project.scripts]
+dwarf2json = "dwarffi.cli:main"
