@@ -7,6 +7,7 @@ import pytest
 
 from dwarffi import DFFI
 
+
 def test_load_elf_success(tmp_path):
     ffi = DFFI()
 
