@@ -1360,3 +1360,100 @@ class DFFI:
             if member_name in t.get_flattened_fields(self):
                 results[name] = t
         return results
+    
+    def load_elf(
+        self,
+        elf_path: str,
+        dwarf2json_cmd: Optional[str] = None,
+        save_isf_to: Optional[str] = None,
+    ) -> None:
+        """
+        Extracts DWARF info from an existing ELF/Mach-O binary via dwarf2json,
+        and dynamically loads the resulting types and symbols into this DFFI instance.
+
+        Args:
+            elf_path: Path to the ELF or Mach-O file.
+            dwarf2json_cmd: Path to the dwarf2json executable.
+            save_isf_to: Optional file path to cache the generated ISF.
+        """
+        dwarf2json_cmd = dwarf2json_cmd or get_dwarf2json_path()
+        if dwarf2json_cmd is None:
+            raise RuntimeError(
+                "'dwarf2json' not found in PATH.\n"
+                "dwarffi requires dwarf2json to extract type info from compiled C code.\n"
+                "Please download or build it from: https://github.com/volatilityfoundation/dwarf2json"
+            )
+
+        if not os.path.exists(elf_path):
+            raise FileNotFoundError(f"Binary file not found: {elf_path}")
+
+        # Run dwarf2json (using --elf / --macho to get both types and symbols)
+        if sys.platform == "darwin":
+            cmd = [dwarf2json_cmd, "mac", "--macho", elf_path]
+        else:
+            cmd = [dwarf2json_cmd, "linux", "--elf", elf_path]
+
+        try:
+            res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"dwarf2json failed:\nCommand: {' '.join(cmd)}\nStderr: {e.stderr}"
+            ) from e
+
+        # Parse the JSON output
+        try:
+            isf_dict = json.loads(res.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"Failed to parse dwarf2json output: {e}\nOutput head: {res.stdout[:500]}"
+            ) from e
+
+        # Optionally save the ISF to disk
+        if save_isf_to:
+            out_path = os.path.abspath(save_isf_to)
+            os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+            if out_path.endswith(".json.xz"):
+                with lzma.open(out_path, "wt", encoding="utf-8") as xf:
+                    json.dump(isf_dict, xf, indent=2, sort_keys=True)
+            elif out_path.endswith(".json"):
+                with open(out_path, "w", encoding="utf-8") as jf:
+                    json.dump(isf_dict, jf, indent=2, sort_keys=True)
+            else:
+                raise ValueError("save_isf_to must end with '.json' or '.json.xz'")
+
+        # Load into this DFFI instance
+        vtype_obj = VtypeJson(isf_dict)
+        pseudo_path = f"<elf_{id(elf_path)}_{os.path.basename(elf_path)}>"
+        self._add_vtypejson(pseudo_path, vtype_obj)
+
+    def load_elf_bytes(
+        self,
+        elf_bytes: Union[bytes, bytearray],
+        dwarf2json_cmd: Optional[str] = None,
+        save_isf_to: Optional[str] = None,
+    ) -> None:
+        """
+        Extracts DWARF info from an in-memory ELF/Mach-O binary via dwarf2json,
+        and dynamically loads the resulting types and symbols into this DFFI instance.
+        
+        Ideal for handling API uploads without managing manual cleanup.
+
+        Args:
+            elf_bytes: Raw bytes of the uploaded ELF/Mach-O file.
+            dwarf2json_cmd: Path to the dwarf2json executable.
+            save_isf_to: Optional file path to cache the generated ISF.
+        """
+        with tempfile.NamedTemporaryFile(delete=False) as tmp_elf:
+            tmp_elf.write(elf_bytes)
+            tmp_elf_path = tmp_elf.name
+            
+        try:
+            self.load_elf(
+                tmp_elf_path, 
+                dwarf2json_cmd=dwarf2json_cmd, 
+                save_isf_to=save_isf_to
+            )
+        finally:
+            if os.path.exists(tmp_elf_path):
+                os.remove(tmp_elf_path)
