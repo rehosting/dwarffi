@@ -114,6 +114,38 @@ class DFFI:
                     self.load_isf(item)
             else:
                 self.load_isf(isf_input)
+
+    @classmethod
+    def from_ghidra(
+        cls,
+        program: Any = None,
+        *,
+        include_symbols: bool = True,
+        include_functions: bool = True,
+        types_only: bool = False,
+        source_name: Optional[str] = None,
+    ) -> "DFFI":
+        """
+        Create a snapshot-backed DFFI instance from a PyGhidra/Ghidra Program.
+
+        If ``program`` is omitted, this looks for ``currentProgram`` in the
+        caller's PyGhidra or GhidraScript context. Type, symbol, and function
+        data are captured at call time; later Ghidra edits require calling this
+        method again.
+        """
+        from .ghidra import current_program_from_context, program_to_isf
+
+        if program is None:
+            program = current_program_from_context()
+        return cls(
+            program_to_isf(
+                program,
+                include_symbols=include_symbols,
+                include_functions=include_functions,
+                types_only=types_only,
+                source_name=source_name,
+            )
+        )
     
     def _add_vtypejson(self, source: str, vtype_obj: VtypeJson) -> None:
         """Internal helper to add a VtypeJson instance to the engine."""
