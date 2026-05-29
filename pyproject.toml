@@ -63,7 +63,9 @@ version-file = "src/dwarffi/_version.py"
 [tool.hatch.build]
 artifacts = [
     "src/dwarffi/bin/dwarf2json",
-    "src/dwarffi/bin/dwarf2json.exe"
+    "src/dwarffi/bin/dwarf2json.exe",
+    "src/dwarffi/ghidra_scripts/Ghidra2ISF.java",
+    "src/dwarffi/ghidra_scripts/ISF2Ghidra.java"
 ]
 
 [tool.hatch.version.raw-options]

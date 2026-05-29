@@ -57,3 +57,84 @@ jobs:
 
       - name: Pytest
         run: pytest -q
+
+  ghidra-script-compile:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ghidra:
+          - version: "11.0"
+            tag: "Ghidra_11.0_build"
+            asset: "ghidra_11.0_PUBLIC_20231222.zip"
+          - version: "11.4.2"
+            tag: "Ghidra_11.4.2_build"
+            asset: "ghidra_11.4.2_PUBLIC_20250826.zip"
+          - version: "12.1"
+            tag: "Ghidra_12.1_build"
+            asset: "ghidra_12.1_PUBLIC_20260513.zip"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check Ghidra script changes
+        id: changes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -E '^(src/dwarffi/ghidra_scripts/|tests/test_ghidra2isf.py|\.github/workflows/ci\.yml)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Ghidra ${{ matrix.ghidra.version }}
+        if: steps.changes.outputs.changed == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .cache/ghidra/${{ matrix.ghidra.asset }}
+          key: ghidra-${{ matrix.ghidra.asset }}
+
+      - name: Download Ghidra ${{ matrix.ghidra.version }}
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p .cache/ghidra
+          if [ ! -f ".cache/ghidra/${{ matrix.ghidra.asset }}" ]; then
+            curl -L \
+              -o ".cache/ghidra/${{ matrix.ghidra.asset }}" \
+              "https://github.com/NationalSecurityAgency/ghidra/releases/download/${{ matrix.ghidra.tag }}/${{ matrix.ghidra.asset }}"
+          fi
+
+      - name: Compile Ghidra scripts against ${{ matrix.ghidra.version }}
+        if: steps.changes.outputs.changed == 'true'
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -rf /tmp/ghidra-ci /tmp/ghidra-script-classes
+          mkdir -p /tmp/ghidra-ci /tmp/ghidra-script-classes
+          unzip -q ".cache/ghidra/${{ matrix.ghidra.asset }}" -d /tmp/ghidra-ci
+          GHIDRA_HOME="$(find /tmp/ghidra-ci -maxdepth 1 -type d -name 'ghidra_*' | head -n 1)"
+          test -n "$GHIDRA_HOME"
+          find "$GHIDRA_HOME" -name '*.jar' -print > /tmp/ghidra-jars.txt
+          test -s /tmp/ghidra-jars.txt
+          javac -proc:none \
+            -cp "$(paste -sd: /tmp/ghidra-jars.txt)" \
+            -d /tmp/ghidra-script-classes \
+            src/dwarffi/ghidra_scripts/Ghidra2ISF.java \
+            src/dwarffi/ghidra_scripts/ISF2Ghidra.java
+
+      - name: Skip Ghidra compile
+        if: steps.changes.outputs.changed != 'true'
+        run: echo "No Ghidra script or workflow changes detected; skipping Ghidra compile matrix."

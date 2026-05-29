@@ -13,6 +13,7 @@ as defined by the toolchain and target architecture.
 - **Linux / embedded workflows:** ISF generated from **DWARF** in ELF binaries (e.g., via `dwarf2json`).
 - **Windows workflows:** ISF generated from **PDB** symbols (e.g., Volatility3-style Windows ISFs generated from PDBs).
 - **MacOS / Mach-O workflows:** ISF generated from DWARF in Mach-O binaries.
+- **Ghidra workflows:** ISF generated from the active Ghidra program using the bundled `Ghidra2ISF.java` script.
 
 
 Read more about `dwarf2json` and ISF in the [dwarf2json README](https://github.com/volatilityfoundation/dwarf2json).  
@@ -134,6 +135,46 @@ print(ffi.pretty_print(inst))
 print(ffi.to_dict(inst))
 
 ffi.inspect_layout("struct _UNICODE_STRING")
+```
+
+---
+
+## Ghidra ISF scripts
+
+`dwarffi` includes Ghidra scripts under `src/dwarffi/ghidra_scripts`.
+
+Export the active Ghidra program to ISF:
+
+```bash
+analyzeHeadless /tmp/ghidra-project DffiExport \
+  -import ./firmware.elf \
+  -scriptPath ./src/dwarffi/ghidra_scripts \
+  -postScript Ghidra2ISF.java ./firmware.isf.json \
+  -deleteProject
+```
+
+The exporter writes `base_types`, `user_types`, `enums`, `typedefs`, `symbols`,
+and `functions` in the same ISF shape consumed by `DFFI`.
+
+Import an ISF into the active Ghidra program:
+
+```bash
+analyzeHeadless /tmp/ghidra-project DffiImport \
+  -import ./firmware.elf \
+  -scriptPath ./src/dwarffi/ghidra_scripts \
+  -postScript ISF2Ghidra.java ./firmware.isf.json
+```
+
+The importer creates a `/ISF` data type category, imports base types, structs,
+unions, enums, typedefs, arrays, pointers, and bitfields, then applies labels,
+data types, and function signatures when addresses are present.
+
+Optional script arguments for both scripts:
+
+```bash
+--types-only
+--no-symbols
+--no-functions
 ```
 
 ---
