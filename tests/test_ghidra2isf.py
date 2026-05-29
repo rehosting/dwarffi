@@ -13,7 +13,6 @@ import pytest
 
 from dwarffi import DFFI, VtypeJson
 
-
 GHIDRA_SCRIPT_DIR = (
     Path(__file__).resolve().parents[1]
     / "src"
