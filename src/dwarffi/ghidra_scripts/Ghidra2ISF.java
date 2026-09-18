@@ -242,6 +242,18 @@ public class Ghidra2ISF extends GhidraScript {
             }
 
             TreeMap<String, Object> fields = new TreeMap<>();
+            // Register this type BEFORE descending into its fields. A field whose
+            // type refers back to this composite -- e.g. `struct dentry *d_parent`,
+            // any `list_head`, or `task_struct->parent` -- would otherwise recurse
+            // back through exportComposite indefinitely and overflow the stack, so
+            // no self-referential type (and thus no real kernel) could be exported.
+            // `fields` is stored by reference here and populated by the loop below.
+            LinkedHashMap<String, Object> record = new LinkedHashMap<>();
+            record.put("size", Math.max(composite.getLength(), 0));
+            record.put("fields", fields);
+            record.put("kind", kind);
+            userTypes.put(name, record);
+
             DataTypeComponent[] components;
             if (composite instanceof Structure) {
                 components = ((Structure) composite).getComponents();
@@ -275,12 +287,6 @@ public class Ghidra2ISF extends GhidraScript {
                 }
                 fields.put(fieldName, field);
             }
-
-            LinkedHashMap<String, Object> record = new LinkedHashMap<>();
-            record.put("size", Math.max(composite.getLength(), 0));
-            record.put("fields", fields);
-            record.put("kind", kind);
-            userTypes.put(name, record);
         }
 
         private Map<String, Object> fieldTypeRef(DataTypeComponent component) {

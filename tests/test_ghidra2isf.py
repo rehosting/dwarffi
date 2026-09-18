@@ -356,3 +356,95 @@ def test_bundled_ghidra_scripts_compile_against_ghidra(tmp_path: Path) -> None:
         text=True,
         capture_output=True,
     )
+
+
+@pytest.mark.skipif(
+    os.environ.get("DFFI_GHIDRA_TEST") != "1",
+    reason="set DFFI_GHIDRA_TEST=1 to run the Ghidra integration test",
+)
+def test_ghidra2isf_exports_self_referential_struct(tmp_path: Path) -> None:
+    """Regression: a struct that points back at itself must not overflow the stack.
+
+    exportComposite used to register a type only after walking its fields, so a
+    self-referential member (``struct node *next`` -- as in every ``list_head``,
+    ``dentry->d_parent`` or ``task_struct->parent`` in a real kernel) recursed
+    through exportComposite forever. We now register the type before recursing.
+    """
+    ghidra_home = _ghidra_home()
+    if ghidra_home is None:
+        pytest.skip("GHIDRA_HOME/analyzeHeadless not found; set DFFI_GHIDRA_DOWNLOAD=1 to download")
+    gcc = shutil.which("gcc")
+    if gcc is None:
+        pytest.skip("gcc is required for the Ghidra integration fixture")
+
+    source_path = tmp_path / "selfref.c"
+    binary_path = tmp_path / "selfref"
+    isf_path = tmp_path / "selfref.isf.json"
+    project_dir = tmp_path / "ghidra_project"
+    project_dir.mkdir()
+    ghidra_user_home = tmp_path / "ghidra_home"
+    source_path.write_text(
+        """
+        #include <stdint.h>
+
+        struct node {
+            int value;
+            struct node *next;      /* direct self-reference */
+            struct node *prev;
+        };
+
+        struct tree {
+            struct tree *left;      /* mutually + self referential */
+            struct tree *right;
+            struct node *items;
+        };
+
+        struct node N;
+        struct tree T;
+
+        int main(void) { return N.value + (T.left != 0); }
+        """,
+        encoding="utf-8",
+    )
+
+    subprocess.run(
+        [gcc, "-g", "-O0", "-fno-eliminate-unused-debug-types", str(source_path),
+         "-o", str(binary_path)],
+        check=True, text=True, capture_output=True,
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(ghidra_user_home)
+    env["XDG_CONFIG_HOME"] = str(ghidra_user_home / ".config")
+    env["XDG_CACHE_HOME"] = str(ghidra_user_home / ".cache")
+    env["XDG_DATA_HOME"] = str(ghidra_user_home / ".local" / "share")
+    java_path = shutil.which("java")
+    if java_path and "JAVA_HOME" not in env:
+        env["JAVA_HOME"] = str(Path(java_path).resolve().parents[1])
+    localhost_options = "-Djava.net.preferIPv4Stack=true -Djava.rmi.server.hostname=localhost"
+    env["JAVA_TOOL_OPTIONS"] = f"{env.get('JAVA_TOOL_OPTIONS', '')} {localhost_options}".strip()
+
+    result = subprocess.run(
+        [
+            str(ghidra_home / "support" / "analyzeHeadless"),
+            str(project_dir), "DffiSelfRefTest",
+            "-import", str(binary_path),
+            "-scriptPath", str(GHIDRA_SCRIPT_DIR),
+            "-postScript", "Ghidra2ISF.java", str(isf_path),
+            "-deleteProject",
+        ],
+        text=True, capture_output=True, timeout=180, env=env,
+    )
+    if result.returncode != 0:
+        output = result.stdout + result.stderr
+        if "InetAddress.getLocalHost" in output or "Name or service not known" in output:
+            pytest.skip("Ghidra cannot resolve the container hostname in this environment")
+        assert "StackOverflowError" not in output, "self-referential struct overflowed the stack"
+        raise subprocess.CalledProcessError(result.returncode, result.args,
+                                            output=result.stdout, stderr=result.stderr)
+
+    exported = json.loads(isf_path.read_text(encoding="utf-8"))
+    node = exported["user_types"]["node"]
+    assert node["fields"]["next"]["type"]["kind"] == "pointer"
+    assert node["fields"]["next"]["type"]["subtype"]["name"] == "node"
+    assert "tree" in exported["user_types"]
