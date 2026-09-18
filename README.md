@@ -156,6 +156,23 @@ analyzeHeadless /tmp/ghidra-project DffiExport \
 The exporter writes `base_types`, `user_types`, `enums`, `typedefs`, `symbols`,
 and `functions` in the same ISF shape consumed by `DFFI`.
 
+Inside PyGhidra, you can snapshot the currently open program directly without
+writing an intermediate JSON file:
+
+```python
+from dwarffi import DFFI
+
+ffi = DFFI.from_ghidra(currentProgram)
+print(ffi.sizeof("Packet"))
+print(ffi.get_symbol("global_counter"))
+```
+
+If `currentProgram` is in the caller's PyGhidra or GhidraScript scope, the
+argument can be omitted. The snapshot captures types, symbols, and functions at
+call time; call `DFFI.from_ghidra(...)` again after editing Ghidra data types.
+Use `types_only=True`, `include_symbols=False`, or `include_functions=False` to
+limit exported sections. PyGhidra is not an install dependency for `dwarffi`.
+
 Import an ISF into the active Ghidra program:
 
 ```bash
